@@ -1,0 +1,43 @@
+name: Merge Revo upstream safely
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xt9y-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Merge without overwriting fork changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'xt9y-upstream-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/if-not-nil/revo.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date"
+            exit 0
+          fi
+          # Conflict or failed merge exits before push. Never force-push.
+          git merge --no-ff --no-commit upstream/main
+          zig build --fetch
+          zig build -Doptimize=ReleaseFast
+          git commit -m 'chore: merge upstream Revo main'
+          git push origin HEAD:main
