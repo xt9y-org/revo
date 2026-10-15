@@ -73,7 +73,7 @@ fn decode(comptime T: type, value: Value, vm: *VM, temp: *?[:0]u8) !T {
             if (id == revo.CoreAtoms.atomId(.false)) return false;
             return error.ExpectedBoolean;
         },
-        .int => return ext.numToInt(T, value.asNumOpt() orelse return error.ExpectedNumber) orelse error.IntegerOutOfRange,
+        .int => return ext.numToInt(T, value.asNumOpt() orelse return error.ExpectedNumber) orelse return error.IntegerOutOfRange,
         .float => return @floatCast(value.asNumOpt() orelse return error.ExpectedNumber),
         .@"enum" => |e| {
             const n = ext.numToInt(e.tag_type, value.asNumOpt() orelse return error.ExpectedNumber) orelse return error.IntegerOutOfRange;
