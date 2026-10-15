@@ -61,7 +61,7 @@ fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8
 fn supportedFn(comptime T: type) bool {
     if (@typeInfo(T) != .@"fn") return false;
     const f = @typeInfo(T).@"fn";
-    if (f.is_generic or f.is_var_args or f.param_types.len > ext.max_params) return false;
+    if (f.is_generic or f.param_types.len > ext.max_params) return false;
     if (f.return_type == null or !supported(f.return_type.?, true)) return false;
     for (f.param_types) |p| {
         if (p == null or !supported(p.?, false)) return false;
