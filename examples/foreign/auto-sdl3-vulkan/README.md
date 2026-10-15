@@ -1,7 +1,7 @@
 # Revo + SDL3 + Snektron/vulkan-zig
 
 Windowing is provided by SDL3; Vulkan API types, loader and dispatch
-are provided by [Snektron/vulkan-zig](https://github.com/Snektron/vulkan-zig).
+are provided by [Snektron/vulkan-zig](https://github.com/Snektron/vulkan-zig) (pinned to the \`zig-0.17-compat\` branch).
 This smoke test initializes SDL video, creates a Vulkan window, loads Vulkan,
 creates an instance with SDL's required extensions, and creates a Vulkan
 surface. It then runs an event loop and destroys the surface, instance and window.
