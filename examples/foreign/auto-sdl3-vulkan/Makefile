@@ -9,7 +9,7 @@ all: compile
 
 deps:
 	$(ZIG) fetch --save=sdl3 git+https://github.com/zmscode/sdl3-zig.git
-	$(ZIG) fetch --save=vulkan_zig git+https://github.com/Snektron/vulkan-zig.git
+	$(ZIG) fetch --save=vulkan_zig git+https://github.com/Snektron/vulkan-zig.git?ref=zig-0.17-compat
 	$(ZIG) fetch --save=vulkan_headers git+https://github.com/KhronosGroup/Vulkan-Headers.git
 
 compile:
