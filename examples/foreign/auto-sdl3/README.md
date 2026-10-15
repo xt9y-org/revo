@@ -24,23 +24,38 @@ make
 `make` compiles and runs the Revo program. The window closes using the system
 close button. The example intentionally uses only SDL's simple scalar/pointer API.
 
-## Limitations
+## Generic type coverage
 
-This is **not** automatic support for every possible Zig type. A function is
-automatically exported only if its signature uses booleans, numeric scalars,
-enums, compatible pointers, optional pointers or a supported error-union return.
-Read-only C-style byte pointers are marshalled as temporary NUL-terminated
-Revo strings. Returned native pointers are boxed as Revo resources.
+The reflection generator automatically discovers native functions that use:
 
-Functions using structs by value, slices, callback parameters, generic/comptime
-arguments and other complex types are **skipped**, not wrapped incorrectly.
-Native pointer resources do not carry SDL ownership semantics; call the proper
-SDL destruction function. The raw SDL API includes many operations taking
-pointers to caller-owned structs (e.g. `SDL_PollEvent`). Calling those requires
-a separate generic memory/struct representation, which this example does not
-provide.
+- Booleans, numbers, integer-backed enums and opaque native pointers
+- Nested structs and fixed-size arrays (Revo named/indexed tables)
+- Slices (Revo tables) and byte slices (Revo strings)
+- Optionals and tagged unions (`{tag = "...", value = ...}`)
+- Zig error-union return values, mapped to Revo error results
 
-Zig's build system is used only to compile the native package. The ordinary
-Revo script contains no binding declarations. This extension resides in two
-isolated fork files: `src/auto_bindings.zig` plus a one-line export from
-`src/extension.zig` to reduce conflicts when merging upstream.
+No per-function declarations or SDL-specific wrappers are maintained. The
+source API is reflected at Zig compile time.
+
+## Hard boundaries
+
+This is **not a universal Zig interpreter or complete SDL3 importer**. Zig
+comptime functions require compile-time arguments and cannot be instantiated
+from an arbitrary Revo runtime call. Callbacks require an explicit ownership
+and thread-execution policy. A Zig allocator cannot be conjured from Revo
+without a memory/lifetime contract. Untagged C unions do not encode safely
+without knowing which field is active. Packed structs, function pointers and
+recursive types beyond the reflection safety limit are not automatically
+exposed. Public constants/types and nested method namespaces are not yet
+transferred to the Revo module table.
+
+Raw pointers are preserved as opaque Revo resources rather than being
+unsafely truncated into floating-point numbers. They do not automatically
+manage the library's memory: call the documented native deinitializer.
+The automatic marshalling of byte buffers and slices copies values and does
+not expose an arena buffer beyond the native call.
+
+An SDL3 window can use the scalar/pointer API (such as SDL_Init and
+SDL_CreateWindow), but APIs like SDL_PollEvent that fill caller-owned
+SDL_Event structures require a native out-parameter allocation and layout
+model before they can be used directly.
