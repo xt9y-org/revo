@@ -1,17 +1,21 @@
-//! Automatic Revo bindings for ordinary Zig functions.
-//! Generated at comptime; no per-function Revo declarations or hand-written wrappers.
-//! Only signatures representable safely by Revo are exported. Unsupported
-//! declarations are skipped, including slices, callbacks, structs and generics.
+//! Compile-time Zig namespace to Revo host-call adapters.
+//! Reflect public function declarations; no per-function signature lists.
+//! Value marshalling: bool, numeric/enum, arrays, slices, structs, tagged
+//! unions, optionals and error unions. Native pointers remain opaque handles.
+//! Callbacks/comptime-specialized and allocator-dependent APIs need an
+//! explicit lifetime/specialization contract and are not auto-exported.
 const std = @import("std");
 const revo = @import("root.zig");
 const ext = @import("extension.zig");
+
 const Value = ext.Value;
 const VM = ext.VM;
 const HostResult = ext.HostResult;
+const Allocator = std.mem.Allocator;
 
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |p| p.child == u8 and p.is_const and (p.size == .c or p.size == .many),
+        .pointer => |p| p.child == u8 and p.is_const and (p.size == .c or p.size == .many) and p.sentinel_ptr != null,
         else => false,
     };
 }
@@ -23,10 +27,27 @@ fn supported(comptime T: type, comptime is_return: bool) bool {
         .int => |i| i.bits <= 64,
         .float => |f| f.bits <= 64,
         .@"enum" => |e| @typeInfo(e.tag_type).int.bits <= 64,
-        .pointer => |p| p.size != .slice and @typeInfo(p.child) != .@"fn",
-        .optional => |o| supported(o.child, is_return) and switch (@typeInfo(o.child)) {
-            .pointer => true,
-            else => false,
+        .array => |a| a.len <= 4096 and supported(a.child, is_return),
+        .pointer => |p| switch (p.size) {
+            .slice => supported(p.child, is_return),
+            // For an input C string we marshal from a Revo string, otherwise
+            // pointers are handles. Returned pointers must remain valid.
+            .one, .many, .c => @typeInfo(p.child) != .@"fn",
+        },
+        .optional => |o| supported(o.child, is_return),
+        .@"struct" => |s| blk: {
+            if (s.layout == .@"packed") break :blk false;
+            for (s.fields) |f| {
+                if (f.is_comptime or !supported(f.type, is_return)) break :blk false;
+            }
+            break :blk true;
+        },
+        .@"union" => |u| blk: {
+            if (u.tag_type == null) break :blk false;
+            for (u.fields) |f| {
+                if (!supported(f.type, is_return)) break :blk false;
+            }
+            break :blk true;
         },
         .error_union => |e| is_return and supported(e.payload, true),
         else => false,
@@ -57,69 +78,159 @@ fn paramType(comptime T: type) ext.ParamType {
     return switch (@typeInfo(T)) {
         .bool => .bool,
         .int, .float, .@"enum" => .number,
+        .@"struct", .array, .@"union" => .table,
+        .pointer => |p| if (p.size == .slice) .any else .any,
         else => .any,
     };
 }
 
-fn isNil(value: Value) bool {
-    return value.asAtom() == revo.CoreAtoms.atomId(.nil);
+fn isNil(v: Value) bool {
+    return v.asAtom() == revo.CoreAtoms.atomId(.nil);
 }
 
-fn decode(comptime T: type, value: Value, vm: *VM, temp: *?[:0]u8) !T {
+fn number(comptime T: type, v: Value) !T {
+    return ext.numToInt(T, v.asNumOpt() orelse return error.ExpectedNumber) orelse error.IntegerOutOfRange;
+}
+
+fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
     switch (@typeInfo(T)) {
         .bool => {
-            const id = value.asAtom() orelse return error.ExpectedBoolean;
-            if (id == revo.CoreAtoms.atomId(.true)) return true;
-            if (id == revo.CoreAtoms.atomId(.false)) return false;
+            const a = v.asAtom() orelse return error.ExpectedBoolean;
+            if (a == revo.CoreAtoms.atomId(.true)) return true;
+            if (a == revo.CoreAtoms.atomId(.false)) return false;
             return error.ExpectedBoolean;
         },
-        .int => return ext.numToInt(T, value.asNumOpt() orelse return error.ExpectedNumber) orelse return error.IntegerOutOfRange,
-        .float => return @floatCast(value.asNumOpt() orelse return error.ExpectedNumber),
-        .@"enum" => |e| {
-            const n = ext.numToInt(e.tag_type, value.asNumOpt() orelse return error.ExpectedNumber) orelse return error.IntegerOutOfRange;
-            return @enumFromInt(n);
+        .int => return try number(T, v),
+        .float => return @floatCast(v.asNumOpt() orelse return error.ExpectedNumber),
+        .@"enum" => |e| return @enumFromInt(try number(e.tag_type, v)),
+        .array => |a| {
+            const id = v.asTable() orelse return error.ExpectedTable;
+            const table = try vm.tables.get(id);
+            if (table.array.items.len != a.len) return error.ArrayLengthMismatch;
+            var out: T = undefined;
+            for (0..a.len) |i|
+                out[i] = try decode(a.child, table.array.items[i], vm, alloc);
+            return out;
         },
-        .pointer => {
+        .pointer => |p| {
             if (comptime isCString(T)) {
-                const id = value.asString() orelse return error.ExpectedString;
-                const bytes = vm.stringValue(id);
-                temp.* = try vm.runtime.alloc.dupeSentinel(u8, bytes, 0);
-                return @ptrCast(temp.*.?.ptr);
+                const sid = v.asString() orelse return error.ExpectedString;
+                const copied = try alloc.dupeZ(u8, vm.stringValue(sid));
+                return @ptrCast(copied.ptr);
             }
-            if (isNil(value)) {
-                if (@typeInfo(T).pointer.size == .c) return @ptrFromInt(0);
+            if (p.size == .slice) {
+                if (p.child == u8 and v.asString() != null) {
+                    const source = vm.stringValue(v.asString().?);
+                    if (p.sentinel_ptr != null) {
+                        const copied = try alloc.dupeZ(u8, source);
+                        return copied;
+                    }
+                    return try alloc.dupe(u8, source);
+                }
+                const id = v.asTable() orelse return error.ExpectedTable;
+                const table = try vm.tables.get(id);
+                const n = table.array.items.len;
+                if (p.sentinel_ptr != null) return error.SentinelSliceRequiresString;
+                const out = try alloc.alloc(p.child, n);
+                for (0..n) |i| out[i] = try decode(p.child, table.array.items[i], vm, alloc);
+                return out;
+            }
+            if (isNil(v)) {
+                if (p.size == .c) return @ptrFromInt(0);
                 return error.NullPointer;
             }
-            const ptr = ext.resourcePtr(vm, value) orelse value.asOpaque() orelse return error.ExpectedPointer;
-            return @ptrFromInt(@intFromPtr(ptr));
+            const pointer = ext.resourcePtr(vm, v) orelse v.asOpaque() orelse return error.ExpectedPointer;
+            return @ptrFromInt(@intFromPtr(pointer));
         },
         .optional => |o| {
-            if (isNil(value)) return null;
-            return try decode(o.child, value, vm, temp);
+            if (isNil(v)) return null;
+            return try decode(o.child, v, vm, alloc);
+        },
+        .@"struct" => |s| {
+            const id = v.asTable() orelse return error.ExpectedTable;
+            var out: T = undefined;
+            inline for (s.fields) |field| {
+                const item = vm.getField(Value.new.table(id), field.name) orelse return error.MissingStructField;
+                @field(out, field.name) = try decode(field.type, item, vm, alloc);
+            }
+            return out;
+        },
+        .@"union" => |u| {
+            const id = v.asTable() orelse return error.ExpectedTable;
+            const tag_value = vm.getField(Value.new.table(id), "tag") orelse return error.MissingUnionTag;
+            const sid = tag_value.asString() orelse return error.ExpectedString;
+            const name = vm.stringValue(sid);
+            inline for (u.fields) |field| {
+                if (std.mem.eql(u8, name, field.name)) {
+                    if (field.type == void) return @unionInit(T, field.name, {});
+                    const data = vm.getField(Value.new.table(id), "value") orelse return error.MissingUnionValue;
+                    return @unionInit(T, field.name, try decode(field.type, data, vm, alloc));
+                }
+            }
+            return error.UnknownUnionTag;
         },
         else => unreachable,
     }
 }
 
-fn encode(comptime T: type, value: T, vm: *VM) !HostResult {
+fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
     switch (@typeInfo(T)) {
-        .void => return .data(Value.new.nil()),
-        .bool => return .data(Value.new.boolean(value)),
-        .int, .float => return .data(Value.new.num(value)),
-        .@"enum" => return .data(Value.new.num(@intFromEnum(value))),
+        .void => return Value.new.nil(),
+        .bool => return Value.new.boolean(v),
+        .int => {
+            const f: f64 = @floatFromInt(v);
+            // Revo uses f64 numbers. Do not silently round a 64-bit integer.
+            if (ext.numToInt(T, f) != v) return error.LossyInteger;
+            return Value.new.num(f);
+        },
+        .float => return Value.new.num(v),
+        .@"enum" => return encode(@TypeOf(@intFromEnum(v)), @intFromEnum(v), vm),
+        .array => |a| {
+            const id = try vm.tables.create();
+            const table = try vm.tables.get(id);
+            for (0..a.len) |i| try table.array.append(vm.runtime.alloc, try encode(a.child, v[i], vm));
+            return Value.new.table(id);
+        },
+        .pointer => |p| {
+            if (p.size == .slice) {
+                // Byte slices are copied into Revo-owned strings.
+                if (p.child == u8) return try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, v));
+                const id = try vm.tables.create();
+                for (v) |item| {
+                    const table = try vm.tables.get(id);
+                    try table.array.append(vm.runtime.alloc, try encode(p.child, item, vm));
+                }
+                return Value.new.table(id);
+            }
+            if (@intFromPtr(v) == 0) return Value.new.nil();
+            return try ext.resource(vm, @ptrFromInt(@intFromPtr(v)));
+        },
         .optional => |o| {
-            if (value) |present| return encode(o.child, present, vm);
-            return .data(Value.new.nil());
+            if (v) |payload| return encode(o.child, payload, vm);
+            return Value.new.nil();
+        },
+        .@"struct" => |s| {
+            const id = try vm.tables.create();
+            inline for (s.fields) |field|
+                try vm.putField(id, field.name, try encode(field.type, @field(v, field.name), vm));
+            return Value.new.table(id);
+        },
+        .@"union" => {
+            const id = try vm.tables.create();
+            switch (v) {
+                inline else => |payload, tag| {
+                    try vm.putField(id, "tag", try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, @tagName(tag))));
+                    if (@TypeOf(payload) != void)
+                        try vm.putField(id, "value", try encode(@TypeOf(payload), payload, vm));
+                },
+            }
+            return Value.new.table(id);
         },
         .error_union => |e| {
-            const payload = value catch |err| return .other(@errorName(err));
+            const payload = v catch |err| {
+                return try vm.resultTable(.err, try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, @errorName(err))));
+            };
             return encode(e.payload, payload, vm);
-        },
-        .pointer => {
-            if (@intFromPtr(value) == 0) return .data(Value.new.nil());
-            // Use resource handles rather than packing native pointers into
-            // Revo's 48-bit opaque value representation.
-            return .data(try ext.resource(vm, @ptrFromInt(@intFromPtr(value))));
         },
         else => unreachable,
     }
@@ -133,36 +244,31 @@ fn Adapter(comptime f: anytype) type {
             for (info.param_types, 0..) |param, i| out[i] = paramType(param.?);
             break :blk out;
         };
-
-        fn argsTuple() type {
+        fn Args() type {
             var types: [info.param_types.len]type = undefined;
             for (info.param_types, 0..) |param, i| types[i] = param.?;
             return @Tuple(&types);
         }
-
         pub fn call(args: []const Value, vm: *VM) anyerror!HostResult {
             if (args.len != info.param_types.len)
                 return .errArity(args.len, info.param_types.len);
 
-            var strings: [ext.max_params]?[:0]u8 = @splat(null);
-            defer for (strings) |item| {
-                if (item) |buf| vm.runtime.alloc.free(buf);
-            };
-
-            var native: argsTuple() = undefined;
-            inline for (info.param_types, 0..) |param, i| {
-                native[i] = decode(param.?, args[i], vm, &strings[i]) catch |err|
+            var arena = std.heap.ArenaAllocator.init(vm.runtime.alloc);
+            defer arena.deinit();
+            var native: Args() = undefined;
+            inline for (info.param_types, 0..) |p, i| {
+                native[i] = decode(p.?, args[i], vm, arena.allocator()) catch |err|
                     return .other(@errorName(err));
             }
             const result = @call(.auto, f, native);
-            return encode(@TypeOf(result), result, vm);
+            const value = try encode(@TypeOf(result), result, vm);
+            return .data(value);
         }
     };
 }
 
-/// Reflect the complete public namespace at compile time. Every compatible
-/// Zig function is exported automatically under its existing name.
-/// Unsupported signatures are omitted rather than producing unsafe calls.
+/// Export every public Zig function whose signature can be represented.
+/// Unsupported functions are omitted; no unsafe coercion is attempted.
 pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBinding {
     var out: [count(Namespace) + 1]revo.HostBinding = undefined;
     var i: usize = 0;
@@ -179,14 +285,22 @@ pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBind
     return out;
 }
 
-test "functions discovered without declaration lists" {
+test "automatically exports structural APIs without manual declarations" {
     const Fixture = struct {
-        pub fn sum(a: i32, b: i32) i32 { return a + b; }
-        pub fn ready() bool { return true; }
-        pub fn incompatible(_: []const u8) void {}
+        pub fn add(a: i32, b: i32) i32 { return a + b; }
+        pub fn transform(s: struct { x: f32, y: f32 }) struct { x: f32, y: f32 } {
+            return .{ .x = s.x * 2, .y = s.y * 3 };
+        }
+        pub fn sum(items: []const i32) i32 {
+            var out: i32 = 0;
+            for (items) |item| out += item;
+            return out;
+        }
+        pub fn impossible(comptime _: type) void {}
     };
     const bound = comptime bindingsFor(Fixture);
-    try std.testing.expectEqual(@as(usize, 3), bound.len);
-    try std.testing.expectEqualStrings("sum", std.mem.span(bound[0].name));
-    try std.testing.expectEqualStrings("ready", std.mem.span(bound[1].name));
+    try std.testing.expectEqual(@as(usize, 4), bound.len);
+    try std.testing.expectEqualStrings("add", std.mem.span(bound[0].name));
+    try std.testing.expectEqualStrings("transform", std.mem.span(bound[1].name));
+    try std.testing.expectEqualStrings("sum", std.mem.span(bound[2].name));
 }
