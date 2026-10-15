@@ -1,11 +1,13 @@
 name: Verify automatic Zig bindings
 
 on:
-  push:
-    branches: [feature/zig-auto-imports]
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: zig-bridge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sdl3:
@@ -16,12 +18,18 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+      - name: Resolve SDL3 package
+        working-directory: examples/foreign/auto-sdl3
+        run: make deps
+      - name: Compile generated Zig bindings
+        working-directory: examples/foreign/auto-sdl3
+        run: zig build -Doptimize=ReleaseFast
       - name: Build Revo
         run: |
           zig build --fetch
           zig build -Doptimize=ReleaseFast
-      - name: Compile automatically bound SDL3 example
+      - name: Compile Revo SDL3 example
         working-directory: examples/foreign/auto-sdl3
         run: |
-          make deps
-          make compile REVO="$GITHUB_WORKSPACE/zig-out/bin/revo"
+          cp zig-out/lib/libsdl3_revo.dylib sdl3_revo.so
+          "$GITHUB_WORKSPACE/zig-out/bin/revo" compile main.rv main.rvo
