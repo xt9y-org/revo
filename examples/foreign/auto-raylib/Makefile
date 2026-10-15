@@ -7,7 +7,7 @@ all: compile
 	$(REVO) main.rv
 
 deps:
-	$(ZIG) build --fetch
+	$(ZIG) fetch --save=raylib_zig 'git+https://github.com/raylib-zig/raylib-zig.git?ref=zig-17'
 
 compile:
 	$(ZIG) build -Doptimize=ReleaseFast
