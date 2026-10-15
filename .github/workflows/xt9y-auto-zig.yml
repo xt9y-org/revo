@@ -10,26 +10,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sdl3:
+  examples:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [auto-sdl3, auto-raylib, auto-sdl3-vulkan]
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
-      - name: Resolve SDL3 package
-        working-directory: examples/foreign/auto-sdl3
-        run: make deps
-      - name: Compile generated Zig bindings
-        working-directory: examples/foreign/auto-sdl3
-        run: zig build -Doptimize=ReleaseFast
       - name: Build Revo
         run: |
           zig build --fetch
           zig build -Doptimize=ReleaseFast
-      - name: Compile Revo SDL3 example
-        working-directory: examples/foreign/auto-sdl3
-        run: |
-          cp zig-out/lib/libsdl3_revo.dylib sdl3_revo.so
-          "$GITHUB_WORKSPACE/zig-out/bin/revo" compile main.rv main.rvo
+      - name: Resolve Zig package dependencies
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: make deps
+      - name: Compile Zig extension and Revo example
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: make compile REVO="$GITHUB_WORKSPACE/zig-out/bin/revo"
