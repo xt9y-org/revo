@@ -21,35 +21,40 @@ fn isCString(comptime T: type) bool {
 }
 
 fn supported(comptime T: type, comptime is_return: bool) bool {
+    return supportedDepth(T, is_return, 0);
+}
+
+fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8) bool {
+    if (depth > 12) return false;
     return switch (@typeInfo(T)) {
         .void => is_return,
         .bool => true,
         .int => |i| i.bits <= 64,
         .float => |f| f.bits <= 64,
         .@"enum" => |e| @typeInfo(e.tag_type).int.bits <= 64,
-        .array => |a| a.len <= 4096 and supported(a.child, is_return),
+        .array => |a| a.len <= 4096 and supportedDepth(a.child, is_return, depth + 1),
         .pointer => |p| switch (p.size) {
-            .slice => supported(p.child, is_return),
+            .slice => supportedDepth(p.child, is_return, depth + 1),
             // For an input C string we marshal from a Revo string, otherwise
             // pointers are handles. Returned pointers must remain valid.
             .one, .many, .c => @typeInfo(p.child) != .@"fn",
         },
-        .optional => |o| supported(o.child, is_return),
+        .optional => |o| supportedDepth(o.child, is_return, depth + 1),
         .@"struct" => |s| blk: {
             if (s.layout == .@"packed") break :blk false;
             for (s.fields) |f| {
-                if (f.is_comptime or !supported(f.type, is_return)) break :blk false;
+                if (f.is_comptime or !supportedDepth(f.type, is_return, depth + 1)) break :blk false;
             }
             break :blk true;
         },
         .@"union" => |u| blk: {
             if (u.tag_type == null) break :blk false;
             for (u.fields) |f| {
-                if (!supported(f.type, is_return)) break :blk false;
+                if (!supportedDepth(f.type, is_return, depth + 1)) break :blk false;
             }
             break :blk true;
         },
-        .error_union => |e| is_return and supported(e.payload, true),
+        .error_union => |e| is_return and supportedDepth(e.payload, true, depth + 1),
         else => false,
     };
 }
