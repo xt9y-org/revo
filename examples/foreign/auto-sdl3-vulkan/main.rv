@@ -5,6 +5,7 @@ const vulkan = import "./vulkan_revo.so"
 if vulkan.open(960, 540) do
     print("Vulkan instance + SDL3 surface created")
     while vulkan.poll() do
+        sleep(1)
     end
     vulkan.close()
 else
