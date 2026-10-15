@@ -89,7 +89,7 @@ fn isNil(v: Value) bool {
 }
 
 fn number(comptime T: type, v: Value) !T {
-    return ext.numToInt(T, v.asNumOpt() orelse return error.ExpectedNumber) orelse error.IntegerOutOfRange;
+    return ext.numToInt(T, v.asNumOpt() orelse return error.ExpectedNumber) orelse return error.IntegerOutOfRange;
 }
 
 fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
@@ -180,7 +180,7 @@ fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
         .int => {
             const f: f64 = @floatFromInt(v);
             // Revo uses f64 numbers. Do not silently round a 64-bit integer.
-            if (ext.numToInt(T, f) != v) return error.LossyInteger;
+            if ((ext.numToInt(T, f) orelse return error.LossyInteger) != v) return error.LossyInteger;
             return Value.new.num(f);
         },
         .float => return Value.new.num(v),
