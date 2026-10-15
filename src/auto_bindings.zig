@@ -27,7 +27,7 @@ fn supported(comptime T: type, comptime is_return: bool) bool {
 fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8) bool {
     if (depth > 12) return false;
     return switch (@typeInfo(T)) {
-        .void => is_return,
+        .void => is_return or depth > 0,
         .bool => true,
         .int => |i| i.bits <= 64,
         .float => |f| f.bits <= 64,
