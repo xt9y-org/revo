@@ -71,6 +71,7 @@ fn supportedFn(comptime T: type) bool {
 }
 
 fn count(comptime Namespace: type) usize {
+    @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
     for (@typeInfo(Namespace).@"struct".decl_names) |name| {
         if (supportedFn(@TypeOf(@field(Namespace, name)))) n += 1;
@@ -275,6 +276,7 @@ fn Adapter(comptime f: anytype) type {
 /// Export every public Zig function whose signature can be represented.
 /// Unsupported functions are omitted; no unsafe coercion is attempted.
 pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBinding {
+    @setEvalBranchQuota(2_000_000);
     var out: [count(Namespace) + 1]revo.HostBinding = undefined;
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
