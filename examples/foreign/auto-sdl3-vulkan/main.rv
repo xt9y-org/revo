@@ -1,0 +1,12 @@
+# SDL3 window + genuine Vulkan instance/surface, implemented in Zig.
+# No manually listed native binding declarations.
+const vulkan = import "./vulkan_revo.so"
+
+if vulkan.open(960, 540) do
+    print("Vulkan instance + SDL3 surface created")
+    while vulkan.poll() do
+    end
+    vulkan.close()
+else
+    print("Vulkan initialization failed; check the console")
+end
