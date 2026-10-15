@@ -15,7 +15,7 @@ const Allocator = std.mem.Allocator;
 
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |p| p.child == u8 and p.is_const and (p.size == .c or p.size == .many) and p.sentinel_ptr != null,
+        .pointer => |p| p.child == u8 and p.is_const and (p.size == .c or (p.size == .many and p.sentinel_ptr != null)),
         else => false,
     };
 }
