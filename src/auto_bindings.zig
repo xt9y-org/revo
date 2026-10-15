@@ -41,7 +41,6 @@ fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8
         },
         .optional => |o| supportedDepth(o.child, is_return, depth + 1),
         .@"struct" => |s| blk: {
-            if (s.layout == .@"packed") break :blk false;
             for (s.fields) |f| {
                 if (f.is_comptime or !supportedDepth(f.type, is_return, depth + 1)) break :blk false;
             }
