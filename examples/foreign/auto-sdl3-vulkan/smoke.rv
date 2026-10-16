@@ -2,5 +2,6 @@ const sdl = import "./sdl_revo.so"
 const vk = import "./vulkan_revo.so"
 print("Vulkan module imported")
 print(sdl.SDL_GetVersion())
+print(sdl.SDL_GetPlatform())
 print("Calling vulkan-zig")
 print(vk.makeApiVersion(0, 1, 0, 0))
