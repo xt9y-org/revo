@@ -7,14 +7,11 @@ LIBEXT := $(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 all: run
 
+VULKAN_LOADER := $(shell command -v brew >/dev/null 2>&1 && brew --prefix vulkan-loader 2>/dev/null)/lib/libvulkan.1.dylib
+
 run: compile
-	@if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then \
-		prefix="$(brew --prefix vulkan-loader 2>/dev/null)"; \
-		if [ -f "$prefix/lib/libvulkan.1.dylib" ]; then \
-			SDL_VULKAN_LIBRARY="$prefix/lib/libvulkan.1.dylib" $(REVO) main.rv; \
-		else \
-			$(REVO) main.rv; \
-		fi; \
+	@if [ "$(shell uname -s)" = "Darwin" ] && [ -f "$(VULKAN_LOADER)" ]; then \
+		SDL_VULKAN_LIBRARY="$(VULKAN_LOADER)" $(REVO) main.rv; \
 	else \
 		$(REVO) main.rv; \
 	fi
