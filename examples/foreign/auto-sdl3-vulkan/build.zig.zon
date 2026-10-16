@@ -6,5 +6,5 @@
     .dependencies = .{
         .revo = .{ .path = "../../.." },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "vulkan.zig", "main.rv", "Makefile", "README.md" },
+    .paths = .{ "build.zig", "build.zig.zon", "main.rv", "Makefile", "README.md" },
 }
