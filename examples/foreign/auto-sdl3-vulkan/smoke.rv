@@ -1,0 +1,4 @@
+const sdl = import "./sdl_revo.so"
+const vk = import "./vulkan_revo.so"
+print(sdl.SDL_GetVersion())
+print(vk.makeApiVersion(0, 1, 0, 0))
