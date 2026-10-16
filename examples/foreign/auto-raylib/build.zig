@@ -33,6 +33,9 @@ pub fn build(b: *std.Build) void {
         }),
         .linkage = .dynamic,
     });
-    lib.root_module.linkLibrary(raylib_dep.artifact("raylib"));
+    // raylib-zig's Zig 0.17 branch does not register a named `raylib`
+    // artifact for consumers. Link the native system library while importing
+    // the full Zig API directly from its repository.
+    lib.root_module.linkSystemLibrary("raylib", .{});
     b.getInstallStep().dependOn(&b.addInstallArtifact(lib, .{}).step);
 }
