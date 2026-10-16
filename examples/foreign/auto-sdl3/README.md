@@ -1,11 +1,12 @@
 # Revo + SDL3 — automatically generated Zig bindings
 
-This example shows how to import an entire Zig namespace into Revo **without
-listing, declaring or hand-writing wrappers for individual functions**.
+This example automatically imports the compatible SDL3 functions referenced
+by its Revo scripts **without listing, declaring or hand-writing native
+wrappers for individual functions**.
 
 `build.zig` imports [sdl3-zig](https://github.com/zmscode/sdl3-zig),
-then generates a tiny `sdl3_revo.zig` module using
-`revo.extension.autoBindings(sdl.raw)`. Revo's existing native extension loader
+then generates a small binding module from genuine translated-C extern
+function declarations referenced in `main.rv` and `smoke.rv`. Revo's existing native extension loader
 imports the generated dynamic library. Nothing is added to Revo's VM bytecode
 or parser.
 
@@ -14,14 +15,13 @@ or parser.
 From this directory:
 
 ```sh
-make deps
-make compile
 make
 ```
 
-`make deps` records the Zig package URL/hash in `build.zig.zon`.
-`make compile` creates `sdl3_revo.so` (Mach-O on macOS) and checks `main.rv`.
-`make` compiles and runs the Revo program. The window closes using the system
+`make` first resolves the SDL3 package with `make deps`, then builds
+`sdl3_revo.so` (a Mach-O dynamic library on macOS), compiles `main.rv`,
+and launches the Revo example. Running `make compile` directly also resolves
+its dependencies automatically. The window closes using the system
 close button. The example intentionally uses only SDL's simple scalar/pointer API.
 
 ## Generic type coverage
