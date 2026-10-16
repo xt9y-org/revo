@@ -26,3 +26,14 @@ present, but complete Vulkan dispatch requires extending the *generic
 interoperability infrastructure*, not adding application-specific wrappers.
 
 On macOS Vulkan requires MoltenVK and a compatible Vulkan loader/ICD.
+
+## Zig 0.17 compatibility
+
+Snektron's `zig-0.17-compat` branch currently still contains a pre-0.17
+`b.standardOptimizeOption(.{}) orelse .debug` call. `make deps` applies a
+single build-system compatibility substitution to the locally fetched copy of
+that dependency. It does not edit Vulkan API declarations, generate shims or
+change any repository source code; `make compile` invokes `deps` first.
+
+The Revo example intentionally avoids nested `else` blocks because the
+older interpreter parser rejected that form in this example.
