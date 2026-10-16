@@ -50,4 +50,5 @@ jobs:
           printf '%s\n' "$output" | grep -Eq '^[0-9]{6,}'
           if [ "${{ matrix.example }}" = "auto-sdl3-vulkan" ]; then
             printf '%s\n' "$output" | grep -Fq 'major = 1'
+            printf '%s\n' "$output" | grep -Fxq 'macOS'
           fi
