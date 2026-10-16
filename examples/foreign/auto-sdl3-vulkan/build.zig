@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     generate_sdl.addFileArg(raw.root_source_file.?);
     const sdl_source = generate_sdl.addOutputFileArg("sdl_revo.zig");
     generate_sdl.addArgs(&.{ "sdl3", "SDL_" });
+    generate_sdl.addFileArg(b.path("main.rv"));
+    generate_sdl.addFileArg(b.path("smoke.rv"));
 
     // The Vulkan namespace comes directly from Snektron/vulkan-zig.
     // No separate handwritten vulkan.zig or per-function registration.
