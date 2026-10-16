@@ -2,7 +2,7 @@
 # No SDL declarations, C wrappers or Zig wrappers are written by hand.
 const sdl = import "./sdl3_revo.so"
 
-if not sdl.SDL_Init(sdl.SDL_INIT_VIDEO()) do
+if not sdl.SDL_Init(32) do
     print("SDL_Init failed")
     exit(1)
 end
@@ -17,7 +17,7 @@ end
 let running = :true
 while running do
     sdl.SDL_PumpEvents()
-    if sdl.SDL_HasEvent(sdl.SDL_EVENT_QUIT()) do
+    if sdl.SDL_HasEvent(256) do
         running = :false
     end
     sdl.SDL_Delay(16)
