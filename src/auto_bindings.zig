@@ -86,14 +86,28 @@ fn Constant(comptime value: anytype) type {
     };
 }
 
-fn count(comptime Namespace: type) usize {
+/// A translated C namespace also contains macros and typedefs. Some macro
+/// placeholders expand to @compileError, so they must be filtered by name
+/// before Zig attempts to evaluate their declarations.
+fn inspectName(comptime name: []const u8, comptime c_prefix: ?[]const u8) bool {
+    if (std.mem.startsWith(u8, name, "__")) return false;
+    if (c_prefix) |prefix| {
+        if (!std.mem.startsWith(u8, name, prefix)) return false;
+        // C function names contain lowercase letters; SCREAMING_SNAKE_CASE
+        // preprocessor macros do not. This avoids evaluating broken macros.
+        for (name[prefix.len..]) |ch| {
+            if (ch >= 'a' and ch <= 'z') return true;
+        }
+        return false;
+    }
+    return true;
+}
+
+fn count(comptime Namespace: type, comptime c_prefix: ?[]const u8) usize {
     @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
-        // C translators emit implementation-only macro placeholders such as
-        // __nonnull = @compileError(...). Never touch those decls: even
-        // @TypeOf(@field(...)) instantiates the failing expression.
-        if (comptime std.mem.startsWith(u8, name, "__")) continue;
+        if (comptime !inspectName(name, c_prefix)) continue;
         // Do not evaluate imported global variables at comptime.
         // Some translated C namespaces expose runtime extern variables.
         if (supportedFn(@TypeOf(@field(Namespace, name)))) n += 1;
@@ -299,15 +313,12 @@ fn Adapter(comptime f: anytype) type {
 
 /// Export every public Zig function whose signature can be represented.
 /// Unsupported functions are omitted; no unsafe coercion is attempted.
-pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBinding {
+fn bindingsFiltered(comptime Namespace: type, comptime c_prefix: ?[]const u8) [count(Namespace, c_prefix) + 1]revo.HostBinding {
     @setEvalBranchQuota(2_000_000);
-    var out: [count(Namespace) + 1]revo.HostBinding = undefined;
+    var out: [count(Namespace, c_prefix) + 1]revo.HostBinding = undefined;
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
-        // C translators emit implementation-only macro placeholders such as
-        // __nonnull = @compileError(...). Never touch those decls: even
-        // @TypeOf(@field(...)) instantiates the failing expression.
-        if (comptime std.mem.startsWith(u8, name, "__")) continue;
+        if (comptime !inspectName(name, c_prefix)) continue;
         // Reflect type first; never evaluate a runtime global at comptime.
         if (comptime supportedFn(@TypeOf(@field(Namespace, name)))) {
             const f = @field(Namespace, name);
@@ -319,6 +330,18 @@ pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBind
     }
     out[i] = std.mem.zeroes(revo.HostBinding);
     return out;
+}
+
+/// Reflect a Zig namespace with no manual function registration.
+pub fn bindingsFor(comptime Namespace: type) [count(Namespace, null) + 1]revo.HostBinding {
+    return bindingsFiltered(Namespace, null);
+}
+
+/// Auto-bind the C functions of a translated package. For example "SDL_"
+/// selects SDL_* functions but skips C macro placeholders without evaluating
+/// their @compileError declarations. No per-function list is maintained.
+pub fn cBindingsFor(comptime Namespace: type, comptime prefix: []const u8) [count(Namespace, prefix) + 1]revo.HostBinding {
+    return bindingsFiltered(Namespace, prefix);
 }
 
 test "automatically exports structural APIs without manual declarations" {
