@@ -69,11 +69,29 @@ fn supportedFn(comptime T: type) bool {
     return true;
 }
 
+fn constantType(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .comptime_int, .comptime_float, .bool, .int, .float, .@"enum" => true,
+        else => false,
+    };
+}
+
+fn Constant(comptime value: anytype) type {
+    return struct {
+        const types = [_]ext.ParamType{};
+        pub fn call(args: []const Value, vm: *VM) anyerror!HostResult {
+            if (args.len != 0) return .errArity(args.len, 0);
+            return .data(try encode(@TypeOf(value), value, vm));
+        }
+    };
+}
+
 fn count(comptime Namespace: type) usize {
     @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
     for (@typeInfo(Namespace).@"struct".decl_names) |name| {
-        if (supportedFn(@TypeOf(@field(Namespace, name)))) n += 1;
+        const decl = @field(Namespace, name);
+        if (supportedFn(@TypeOf(decl)) or constantType(@TypeOf(decl))) n += 1;
     }
     return n;
 }
@@ -181,6 +199,7 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
 fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
     switch (@typeInfo(T)) {
         .void => return Value.new.nil(),
+        .comptime_int, .comptime_float => return Value.new.num(v),
         .bool => return Value.new.boolean(v),
         .int => {
             const f: f64 = @floatFromInt(v);
@@ -280,10 +299,14 @@ pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBind
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
         const f = @field(Namespace, name);
+        const terminated = name ++ "\x00";
         if (comptime supportedFn(@TypeOf(f))) {
             const Bridge = Adapter(f);
-            const terminated = name ++ "\x00";
             out[i] = ext.binding(terminated[0..name.len :0], ext.define(&Bridge.tags, Bridge.call));
+            i += 1;
+        } else if (comptime constantType(@TypeOf(f))) {
+            const Bridge = Constant(f);
+            out[i] = ext.binding(terminated[0..name.len :0], ext.define(&Bridge.types, Bridge.call));
             i += 1;
         }
     }
