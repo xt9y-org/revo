@@ -35,4 +35,5 @@ jobs:
       - name: Headless native import smoke test
         if: matrix.example != 'auto-raylib'
         working-directory: examples/foreign/${{ matrix.example }}
-        run: "$GITHUB_WORKSPACE/zig-out/bin/revo" smoke.rv
+        run: |
+          "$GITHUB_WORKSPACE/zig-out/bin/revo" smoke.rv
