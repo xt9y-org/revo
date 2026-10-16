@@ -4,11 +4,11 @@ const vk = import "./vulkan_revo.so"
 
 print(vk.makeApiVersion(0, 1, 0, 0))
 
-if not sdl.SDL_Init(sdl.SDL_INIT_VIDEO()) do
+if not sdl.SDL_Init(32) do
     panic("SDL3 initialization failed")
 end
 
-const window = sdl.SDL_CreateWindow("Revo / SDL3 / Vulkan", 960, 540, sdl.SDL_WINDOW_VULKAN())
+const window = sdl.SDL_CreateWindow("Revo / SDL3 / Vulkan", 960, 540, 268435456)
 if not window do
     panic("SDL3 Vulkan window creation failed")
 end
@@ -18,7 +18,7 @@ if not sdl.SDL_Vulkan_LoadLibrary(:nil) do
 end
 
 print("SDL3 window + Vulkan loader initialized")
-while not sdl.SDL_HasEvent(sdl.SDL_EVENT_QUIT()) do
+while not sdl.SDL_HasEvent(256) do
     sdl.SDL_PumpEvents()
     sdl.SDL_Delay(16)
 end
