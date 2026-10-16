@@ -12,6 +12,66 @@ const Value = ext.Value;
 const VM = ext.VM;
 const HostResult = ext.HostResult;
 const Allocator = std.mem.Allocator;
+const BridgeApi = @import("auto_binding_abi.zig").Api;
+
+/// A pointer to the actual host's stable C API. Set by capi.loadC after
+/// dlopen, before any generated adapter executes. This is an ABI slot only.
+pub export var revo_auto_api: ?*const BridgeApi = null;
+
+fn bridge() !*const BridgeApi {
+    return revo_auto_api orelse error.NativeBridgeUnavailable;
+}
+fn opaqueVM(vm: *VM) *anyopaque {
+    return @ptrCast(vm);
+}
+fn tableNew(vm: *VM) !Value {
+    const value = (try bridge()).table_create(opaqueVM(vm));
+    if (!value.isTable()) return error.TableAllocationFailed;
+    return value;
+}
+fn tableLength(vm: *VM, v: Value) !usize {
+    if (!v.isTable()) return error.ExpectedTable;
+    return @intCast((try bridge()).table_alen(opaqueVM(vm), v));
+}
+fn tableItem(vm: *VM, v: Value, index: usize) !Value {
+    var result: Value = undefined;
+    if (!(try bridge()).table_get_idx(opaqueVM(vm), v, @intCast(index), &result))
+        return error.TableIndexMissing;
+    return result;
+}
+fn tablePush(vm: *VM, v: Value, item: Value) !void {
+    if (!(try bridge()).table_push(opaqueVM(vm), v, item))
+        return error.TableWriteFailed;
+}
+fn tableField(vm: *VM, v: Value, key: []const u8) !Value {
+    var result: Value = undefined;
+    if (!(try bridge()).table_get_name(opaqueVM(vm), v, key.ptr, key.len, &result))
+        return error.MissingStructField;
+    return result;
+}
+fn tablePut(vm: *VM, v: Value, key: []const u8, item: Value) !void {
+    if (!(try bridge()).table_set_name(opaqueVM(vm), v, key.ptr, key.len, item))
+        return error.TableWriteFailed;
+}
+fn stringBytes(vm: *VM, id: usize) ![]const u8 {
+    const api = try bridge();
+    const ptr = api.string_data(opaqueVM(vm), @intCast(id)) orelse return error.InvalidString;
+    return ptr[0..api.string_length(opaqueVM(vm), @intCast(id))];
+}
+fn valueString(vm: *VM, bytes: []const u8) !Value {
+    const id = (try bridge()).intern(opaqueVM(vm), bytes.ptr, bytes.len);
+    if (id == 0) return error.StringAllocationFailed;
+    return Value.new.str(@intCast(id));
+}
+fn pointerResource(vm: *VM, ptr: ?*anyopaque) !Value {
+    const value = (try bridge()).resource_new(opaqueVM(vm), ptr);
+    if (!value.isResource()) return error.ResourceAllocationFailed;
+    return value;
+}
+fn getResource(vm: *VM, val: Value) !?*anyopaque {
+    return (try bridge()).resource_ptr(opaqueVM(vm), val);
+}
+
 
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
@@ -151,68 +211,61 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
         .float => return @floatCast(v.asNumOpt() orelse return error.ExpectedNumber),
         .@"enum" => |e| return @enumFromInt(try number(e.tag_type, v)),
         .array => |a| {
-            const id = v.asTable() orelse return error.ExpectedTable;
-            const table = try vm.tables.get(id);
-            if (table.array.items.len != a.len) return error.ArrayLengthMismatch;
+            if (try tableLength(vm, v) != a.len) return error.ArrayLengthMismatch;
             var out: T = undefined;
             for (0..a.len) |i|
-                out[i] = try decode(a.child, table.array.items[i], vm, alloc);
+                out[i] = try decode(a.child, try tableItem(vm, v, i), vm, alloc);
             return out;
         },
         .pointer => |p| {
             if (comptime isCString(T)) {
                 if (isNil(v) and p.size == .c) return @ptrFromInt(0);
                 const sid = v.asString() orelse return error.ExpectedString;
-                const copied = try alloc.dupeSentinel(u8, vm.stringValue(sid), 0);
+                const copied = try alloc.dupeSentinel(u8, try stringBytes(vm, sid), 0);
                 return @ptrCast(copied.ptr);
             }
             if (p.size == .slice) {
-                if (p.child == u8 and v.asString() != null) {
-                    const source = vm.stringValue(v.asString().?);
-                    if (p.sentinel_ptr != null) {
-                        const copied = try alloc.dupeSentinel(u8, source, 0);
-                        return copied;
+                if (p.child == u8) {
+                    if (v.asString()) |sid| {
+                        const src = try stringBytes(vm, sid);
+                        if (p.sentinel_ptr != null) return try alloc.dupeSentinel(u8, src, 0);
+                        return try alloc.dupe(u8, src);
                     }
-                    return try alloc.dupe(u8, source);
                 }
-                const id = v.asTable() orelse return error.ExpectedTable;
-                const table = try vm.tables.get(id);
-                const n = table.array.items.len;
                 if (p.sentinel_ptr != null) return error.SentinelSliceRequiresString;
+                const n = try tableLength(vm, v);
                 const out = try alloc.alloc(p.child, n);
-                for (0..n) |i| out[i] = try decode(p.child, table.array.items[i], vm, alloc);
+                for (0..n) |i| out[i] = try decode(p.child, try tableItem(vm, v, i), vm, alloc);
                 return out;
             }
             if (isNil(v)) {
                 if (p.size == .c) return @ptrFromInt(0);
                 return error.NullPointer;
             }
-            const pointer = ext.resourcePtr(vm, v) orelse v.asOpaque() orelse return error.ExpectedPointer;
-            return @ptrFromInt(@intFromPtr(pointer));
+            const ptr = try getResource(vm, v) orelse v.asOpaque() orelse return error.ExpectedPointer;
+            return @ptrFromInt(@intFromPtr(ptr));
         },
         .optional => |o| {
             if (isNil(v)) return null;
             return try decode(o.child, v, vm, alloc);
         },
         .@"struct" => |s| {
-            const id = v.asTable() orelse return error.ExpectedTable;
+            if (!v.isTable()) return error.ExpectedTable;
             var out: T = undefined;
             inline for (s.field_names, s.field_types) |field_name, field_type| {
-                const item = vm.getField(Value.new.table(id), field_name) orelse return error.MissingStructField;
-                @field(out, field_name) = try decode(field_type, item, vm, alloc);
+                @field(out, field_name) = try decode(field_type, try tableField(vm, v, field_name), vm, alloc);
             }
             return out;
         },
         .@"union" => |u| {
-            const id = v.asTable() orelse return error.ExpectedTable;
-            const tag_value = vm.getField(Value.new.table(id), "tag") orelse return error.MissingUnionTag;
+            if (!v.isTable()) return error.ExpectedTable;
+            const tag_value = try tableField(vm, v, "tag");
             const sid = tag_value.asString() orelse return error.ExpectedString;
-            const name = vm.stringValue(sid);
+            const name = try stringBytes(vm, sid);
             inline for (u.field_names, u.field_types) |field_name, field_type| {
                 if (std.mem.eql(u8, name, field_name)) {
                     if (field_type == void) return @unionInit(T, field_name, {});
-                    const data = vm.getField(Value.new.table(id), "value") orelse return error.MissingUnionValue;
-                    return @unionInit(T, field_name, try decode(field_type, data, vm, alloc));
+                    return @unionInit(T, field_name, try decode(field_type, try tableField(vm, v, "value"), vm, alloc));
                 }
             }
             return error.UnknownUnionTag;
@@ -228,56 +281,52 @@ fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
         .bool => return Value.new.boolean(v),
         .int => {
             const f: f64 = @floatFromInt(v);
-            // Revo uses f64 numbers. Do not silently round a 64-bit integer.
             if ((ext.numToInt(T, f) orelse return error.LossyInteger) != v) return error.LossyInteger;
             return Value.new.num(f);
         },
         .float => return Value.new.num(v),
         .@"enum" => return encode(@TypeOf(@intFromEnum(v)), @intFromEnum(v), vm),
         .array => |a| {
-            const id = try vm.tables.create();
-            const table = try vm.tables.get(id);
-            for (0..a.len) |i| try table.array.append(vm.runtime.alloc, try encode(a.child, v[i], vm));
-            return Value.new.table(id);
+            const t = try tableNew(vm);
+            for (0..a.len) |i| try tablePush(vm, t, try encode(a.child, v[i], vm));
+            return t;
         },
         .pointer => |p| {
             if (p.size == .slice) {
-                // Byte slices are copied into Revo-owned strings.
-                if (p.child == u8) return try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, v));
-                const id = try vm.tables.create();
-                for (v) |item| {
-                    const table = try vm.tables.get(id);
-                    try table.array.append(vm.runtime.alloc, try encode(p.child, item, vm));
-                }
-                return Value.new.table(id);
+                if (p.child == u8) return try valueString(vm, v);
+                const t = try tableNew(vm);
+                for (v) |item| try tablePush(vm, t, try encode(p.child, item, vm));
+                return t;
             }
             if (@intFromPtr(v) == 0) return Value.new.nil();
-            return try ext.resource(vm, @ptrFromInt(@intFromPtr(v)));
+            return try pointerResource(vm, @ptrFromInt(@intFromPtr(v)));
         },
         .optional => |o| {
             if (v) |payload| return encode(o.child, payload, vm);
             return Value.new.nil();
         },
         .@"struct" => |s| {
-            const id = try vm.tables.create();
+            const t = try tableNew(vm);
             inline for (s.field_names, s.field_types) |field_name, field_type|
-                try vm.putField(id, field_name, try encode(field_type, @field(v, field_name), vm));
-            return Value.new.table(id);
+                try tablePut(vm, t, field_name, try encode(field_type, @field(v, field_name), vm));
+            return t;
         },
         .@"union" => {
-            const id = try vm.tables.create();
+            const t = try tableNew(vm);
             switch (v) {
                 inline else => |payload, tag| {
-                    try vm.putField(id, "tag", try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, @tagName(tag))));
+                    try tablePut(vm, t, "tag", try valueString(vm, @tagName(tag)));
                     if (@TypeOf(payload) != void)
-                        try vm.putField(id, "value", try encode(@TypeOf(payload), payload, vm));
+                        try tablePut(vm, t, "value", try encode(@TypeOf(payload), payload, vm));
                 },
             }
-            return Value.new.table(id);
+            return t;
         },
         .error_union => |e| {
             const payload = v catch |err| {
-                return try vm.resultTable(.err, try vm.ownValueStringNoDedup(try vm.runtime.alloc.dupe(u8, @errorName(err))));
+                const result = (try bridge()).err_result(opaqueVM(vm), try valueString(vm, @errorName(err)));
+                if (isNil(result)) return error.ErrorResultAllocationFailed;
+                return result;
             };
             return encode(e.payload, payload, vm);
         },
@@ -302,7 +351,7 @@ fn Adapter(comptime f: anytype) type {
             if (args.len != info.param_types.len)
                 return .errArity(args.len, info.param_types.len);
 
-            var arena = std.heap.ArenaAllocator.init(vm.runtime.alloc);
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer arena.deinit();
             var native: Args() = undefined;
             inline for (info.param_types, 0..) |p, i| {
