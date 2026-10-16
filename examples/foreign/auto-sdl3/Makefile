@@ -11,7 +11,7 @@ all: compile
 deps:
 	$(ZIG) fetch --save=sdl3 git+https://github.com/zmscode/sdl3-zig.git
 
-compile:
+compile: deps
 	$(ZIG) build -Doptimize=$(OPTIMIZE)
 	cp zig-out/lib/libsdl3_revo.$(LIBEXT) sdl3_revo.so
 	$(REVO) compile main.rv main.rvo
