@@ -11,9 +11,9 @@ else
         print("SDL3 Vulkan window creation failed")
     else
         print("SDL3 Vulkan-capable window created")
-        if sdl.SDL_Vulkan_LoadLibrary(nil) do
+        if sdl.SDL_Vulkan_LoadLibrary(:nil) do
             print("Vulkan loader initialized")
-            while sdl.SDL_HasEvent(256) == false do
+            while not sdl.SDL_HasEvent(256) do
                 sdl.SDL_PumpEvents()
                 sdl.SDL_Delay(16)
             end
