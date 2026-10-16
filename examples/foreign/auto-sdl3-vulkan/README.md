@@ -1,13 +1,16 @@
 # SDL3 + Snektron/vulkan-zig, no hand-authored Vulkan API shim
 
-Only `build.zig`, `build.zig.zon`, `Makefile`, and `main.rv` are
-present. The Zig build imports both libraries and **generates** the two Revo
+The example has `build.zig`, `build.zig.zon`, `Makefile`, `main.rv`,
+`smoke.rv`, and this README; there is no handwritten Zig API shim. The Zig build imports both libraries and **generates** the two Revo
 native modules:
 
-- `sdl_revo.so` reflects the SDL3 raw function namespace
-- `vulkan_revo.so` reflects the generated `vulkan-zig` root namespace
+- `sdl_revo.so` reflects SDL3 extern functions referenced in `main.rv` or `smoke.rv`
+- `vulkan_revo.so` reflects supported functions in the `vulkan-zig` root namespace
 
 No individual API function declarations or `vulkan.zig` wrapper are written.
+The generic bindings use Revo's host-owned C ABI to marshal structs, arrays,
+strings and native resources safely across the dynamic-library boundary.
+`smoke.rv` verifies a real Vulkan Zig function returning a struct.
 
 ```sh
 make deps
