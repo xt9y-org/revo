@@ -120,14 +120,14 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
         .pointer => |p| {
             if (comptime isCString(T)) {
                 const sid = v.asString() orelse return error.ExpectedString;
-                const copied = try alloc.dupeZ(u8, vm.stringValue(sid));
+                const copied = try alloc.dupeSentinel(u8, vm.stringValue(sid), 0);
                 return @ptrCast(copied.ptr);
             }
             if (p.size == .slice) {
                 if (p.child == u8 and v.asString() != null) {
                     const source = vm.stringValue(v.asString().?);
                     if (p.sentinel_ptr != null) {
-                        const copied = try alloc.dupeZ(u8, source);
+                        const copied = try alloc.dupeSentinel(u8, source, 0);
                         return copied;
                     }
                     return try alloc.dupe(u8, source);
