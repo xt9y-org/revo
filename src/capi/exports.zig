@@ -13,6 +13,27 @@ const functions = vm.callable;
 const RevoBinding = functions.RevoBinding;
 const HostBinding = functions.HostBinding;
 const HostFunc = revo.baselib.host.HostFunc;
+const NativeApi = @import("../auto_binding_abi.zig").Api;
+
+/// Host-owned functions; injected into generated modules before first native call.
+const native_bridge_api: NativeApi = .{
+    .table_create = revo_table_create,
+    .table_alen = revo_table_alen,
+    .table_get_idx = revo_table_get_idx,
+    .table_push = revo_table_push,
+    .table_get_name = revo_table_get_name,
+    .table_set_name = revo_table_set_name,
+    .intern = revo_intern,
+    .string_data = revo_string_data,
+    .string_length = revo_string_length,
+    .resource_new = revo_resource_new,
+    .resource_ptr = revo_resource_ptr,
+    .error_other = revo_c_err_other,
+    .error_arity = revo_c_err_arity,
+    .ok_result = revo_ok,
+    .err_result = revo_err,
+};
+
 const ParamType = revo.baselib.host.ParamType;
 
 // for error/missing returns
@@ -398,6 +419,12 @@ pub fn loadC(vm_ptr: *VM, lib_path: []const u8) ![]functions.CFunction {
     }
 
     var lib = try std.DynLib.open(lib_path);
+
+    // Automatically generated native extensions receive the host's stable
+    // C ABI function table. Never dereference VM data inside the dylib.
+    if (lib.lookup(*?*const NativeApi, "revo_auto_api")) |slot| {
+        slot.* = &native_bridge_api;
+    }
 
     const bindings_ptr: [*]const RevoBinding = lib.lookup([*]const RevoBinding, "revo_bindings") orelse {
         // callers report this themselves (import names both symbols)
