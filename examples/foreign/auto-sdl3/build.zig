@@ -16,6 +16,8 @@ pub fn build(b: *std.Build) void {
     generate.addFileArg(raw.root_source_file.?);
     const bindings = generate.addOutputFileArg("sdl3_revo.zig");
     generate.addArgs(&.{ "sdl3", "SDL_" });
+    generate.addFileArg(b.path("main.rv"));
+    generate.addFileArg(b.path("smoke.rv"));
 
     const library = b.addLibrary(.{
         .name = "sdl3_revo",
