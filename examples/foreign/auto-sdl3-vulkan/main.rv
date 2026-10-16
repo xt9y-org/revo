@@ -1,0 +1,28 @@
+# SDL3 and Vulkan packages imported directly; no handwritten API shim.
+const sdl = import "./sdl_revo.so"
+const vk = import "./vulkan_revo.so"
+
+print(vk.makeApiVersion(0, 1, 0, 0))
+
+if not sdl.SDL_Init(32) do
+    panic("SDL3 initialization failed")
+end
+
+const window = sdl.SDL_CreateWindow("Revo / SDL3 / Vulkan", 960, 540, 268435456)
+if not window do
+    panic("SDL3 Vulkan window creation failed")
+end
+
+if not sdl.SDL_Vulkan_LoadLibrary(:nil) do
+    panic("Vulkan loader initialization failed")
+end
+
+print("SDL3 window + Vulkan loader initialized")
+while not sdl.SDL_HasEvent(256) do
+    sdl.SDL_PumpEvents()
+    sdl.SDL_Delay(16)
+end
+
+sdl.SDL_Vulkan_UnloadLibrary()
+sdl.SDL_DestroyWindow(window)
+sdl.SDL_Quit()

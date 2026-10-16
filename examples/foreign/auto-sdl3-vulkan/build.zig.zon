@@ -1,0 +1,10 @@
+.{
+    .name = .vulkan_zig_examples,
+    .version = "0.1.0",
+    .fingerprint = 0x60508bcca14cfc6d,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .revo = .{ .path = "../../.." },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "main.rv", "smoke.rv", "Makefile", "README.md" },
+}

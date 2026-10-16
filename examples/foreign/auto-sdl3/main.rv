@@ -1,0 +1,27 @@
+# SDL3 functions are discovered automatically from the Zig package.
+# No SDL declarations, C wrappers or Zig wrappers are written by hand.
+const sdl = import "./sdl3_revo.so"
+
+if not sdl.SDL_Init(32) do
+    print("SDL_Init failed")
+    exit(1)
+end
+
+const window = sdl.SDL_CreateWindow("Revo + SDL3", 960, 540, 0)
+if not window do
+    print("SDL_CreateWindow failed")
+    sdl.SDL_Quit()
+    exit(1)
+end
+
+let running = :true
+while running do
+    sdl.SDL_PumpEvents()
+    if sdl.SDL_HasEvent(256) do
+        running = :false
+    end
+    sdl.SDL_Delay(16)
+end
+
+sdl.SDL_DestroyWindow(window)
+sdl.SDL_Quit()

@@ -357,6 +357,8 @@ const std = @import("std");
 pub const vm = @import("vm");
 pub const memory = vm.memory;
 pub const ffi = @import("capi").ffi;
+/// Stable C API shared with generated Zig extension modules.
+pub const auto_binding_abi = @import("auto_binding_abi.zig");
 pub const table = vm.table;
 pub const callable = vm.callable;
 pub const HostBinding = callable.HostBinding;

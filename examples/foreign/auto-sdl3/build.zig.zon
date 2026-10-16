@@ -1,0 +1,16 @@
+.{
+    .name = .xt9y_revo_auto_sdl3,
+    .version = "0.0.0",
+    .fingerprint = 0x5d434a76da7ad60,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .revo = .{ .path = "../../.." },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.rv", "smoke.rv",
+        "Makefile",
+        "README.md",
+    },
+}

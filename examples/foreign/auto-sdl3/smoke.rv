@@ -1,0 +1,2 @@
+const sdl = import "./sdl3_revo.so"
+print(sdl.SDL_GetVersion())

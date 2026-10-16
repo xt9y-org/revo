@@ -1,0 +1,53 @@
+name: Verify automatic Zig bindings
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: zig-bridge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  examples:
+    runs-on: macos-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [auto-sdl3, auto-raylib, auto-sdl3-vulkan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build Revo
+        run: |
+          zig build --fetch
+          zig build -Doptimize=ReleaseFast
+      - name: Resolve Zig package dependencies
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: make deps
+      - name: Compile Zig extension and Revo example
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: make compile REVO="$GITHUB_WORKSPACE/zig-out/bin/revo"
+      - name: Headless native import smoke test
+        if: matrix.example != 'auto-raylib'
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: |
+          set +e
+          output=$("$GITHUB_WORKSPACE/zig-out/bin/revo" smoke.rv 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          if printf '%s\n' "$output" | grep -Eiq 'error:|stack trace:|module not found|panic:'; then
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -Eq '^[0-9]{6,}'
+          if [ "${{ matrix.example }}" = "auto-sdl3-vulkan" ]; then
+            printf '%s\n' "$output" | grep -Fq 'major = 1'
+          fi

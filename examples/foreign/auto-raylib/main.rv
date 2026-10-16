@@ -1,0 +1,14 @@
+# Automatically bound from raylib-zig: no individual function declarations.
+const rl = import "./raylib_revo.so"
+
+rl.initWindow(960, 540, "Revo + raylib")
+rl.setTargetFPS(60)
+
+while not rl.windowShouldClose() do
+    rl.beginDrawing()
+    rl.clearBackground({ r = 20, g = 26, b = 38, a = 255 })
+    rl.drawText("Revo + raylib", 40, 40, 32, { r = 245, g = 245, b = 245, a = 255 })
+    rl.endDrawing()
+end
+
+rl.closeWindow()

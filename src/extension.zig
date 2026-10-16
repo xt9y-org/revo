@@ -55,6 +55,12 @@ pub const numToInt = baselib.host.numToInt;
 /// if you need more, you should use tables instead
 pub const max_params = 16;
 
+/// Automatically export all public Zig functions with Revo-compatible signatures.
+/// No per-function wrappers or declarations are required.
+pub const autoBindings = @import("auto_bindings.zig").bindingsFor;
+/// Generate C package function bindings by prefix, without handwritten wrappers.
+pub const autoCBindings = @import("auto_bindings.zig").cBindingsFor;
+
 /// build a C-stable binding from a `def`-style `HostFunc`
 ///
 /// `name` must be a comptime string (literal or decl name)
