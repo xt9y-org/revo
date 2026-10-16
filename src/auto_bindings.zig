@@ -15,7 +15,7 @@ const Allocator = std.mem.Allocator;
 
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |p| p.child == u8 and p.is_const and (p.size == .c or (p.size == .many and p.sentinel_ptr != null)),
+        .pointer => |p| p.child == u8 and p.attrs.@"const" and (p.size == .c or (p.size == .many and p.sentinel_ptr != null)),
         else => false,
     };
 }
@@ -41,15 +41,15 @@ fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8
         },
         .optional => |o| supportedDepth(o.child, is_return, depth + 1),
         .@"struct" => |s| blk: {
-            for (s.fields) |f| {
-                if (f.is_comptime or !supportedDepth(f.type, is_return, depth + 1)) break :blk false;
+            for (s.field_types, s.field_attrs) |field_type, attrs| {
+                if (attrs.@"comptime" or !supportedDepth(field_type, is_return, depth + 1)) break :blk false;
             }
             break :blk true;
         },
         .@"union" => |u| blk: {
             if (u.tag_type == null) break :blk false;
-            for (u.fields) |f| {
-                if (!supportedDepth(f.type, is_return, depth + 1)) break :blk false;
+            for (u.field_types) |field_type| {
+                if (!supportedDepth(field_type, is_return, depth + 1)) break :blk false;
             }
             break :blk true;
         },
@@ -61,7 +61,7 @@ fn supportedDepth(comptime T: type, comptime is_return: bool, comptime depth: u8
 fn supportedFn(comptime T: type) bool {
     if (@typeInfo(T) != .@"fn") return false;
     const f = @typeInfo(T).@"fn";
-    if (f.is_generic or f.param_types.len > ext.max_params) return false;
+    if (f.is_generic or f.attrs.varargs or f.param_types.len > ext.max_params) return false;
     if (f.return_type == null or !supported(f.return_type.?, true)) return false;
     for (f.param_types) |p| {
         if (p == null or !supported(p.?, false)) return false;
@@ -154,9 +154,9 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
         .@"struct" => |s| {
             const id = v.asTable() orelse return error.ExpectedTable;
             var out: T = undefined;
-            inline for (s.fields) |field| {
-                const item = vm.getField(Value.new.table(id), field.name) orelse return error.MissingStructField;
-                @field(out, field.name) = try decode(field.type, item, vm, alloc);
+            inline for (s.field_names, s.field_types) |field_name, field_type| {
+                const item = vm.getField(Value.new.table(id), field_name) orelse return error.MissingStructField;
+                @field(out, field_name) = try decode(field_type, item, vm, alloc);
             }
             return out;
         },
@@ -165,11 +165,11 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
             const tag_value = vm.getField(Value.new.table(id), "tag") orelse return error.MissingUnionTag;
             const sid = tag_value.asString() orelse return error.ExpectedString;
             const name = vm.stringValue(sid);
-            inline for (u.fields) |field| {
-                if (std.mem.eql(u8, name, field.name)) {
-                    if (field.type == void) return @unionInit(T, field.name, {});
+            inline for (u.field_names, u.field_types) |field_name, field_type| {
+                if (std.mem.eql(u8, name, field_name)) {
+                    if (field_type == void) return @unionInit(T, field_name, {});
                     const data = vm.getField(Value.new.table(id), "value") orelse return error.MissingUnionValue;
-                    return @unionInit(T, field.name, try decode(field.type, data, vm, alloc));
+                    return @unionInit(T, field_name, try decode(field_type, data, vm, alloc));
                 }
             }
             return error.UnknownUnionTag;
@@ -216,8 +216,8 @@ fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
         },
         .@"struct" => |s| {
             const id = try vm.tables.create();
-            inline for (s.fields) |field|
-                try vm.putField(id, field.name, try encode(field.type, @field(v, field.name), vm));
+            inline for (s.field_names, s.field_types) |field_name, field_type|
+                try vm.putField(id, field_name, try encode(field_type, @field(v, field_name), vm));
             return Value.new.table(id);
         },
         .@"union" => {
