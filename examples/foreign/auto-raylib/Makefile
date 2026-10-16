@@ -7,6 +7,7 @@ all: compile
 	$(REVO) main.rv
 
 deps:
+	@if command -v brew >/dev/null 2>&1 && ! brew list --versions raylib >/dev/null 2>&1; then brew install raylib; fi
 	$(ZIG) fetch --save=raylib_zig 'git+https://github.com/raylib-zig/raylib-zig.git?ref=zig-17'
 	$(ZIG) build --fetch
 
