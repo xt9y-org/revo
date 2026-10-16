@@ -89,7 +89,7 @@ fn Constant(comptime value: anytype) type {
 fn count(comptime Namespace: type) usize {
     @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
-    for (@typeInfo(Namespace).@"struct".decl_names) |name| {
+    inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
         const decl = @field(Namespace, name);
         if (supportedFn(@TypeOf(decl)) or constantType(@TypeOf(decl))) n += 1;
     }
