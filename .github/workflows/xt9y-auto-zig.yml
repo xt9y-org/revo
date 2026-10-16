@@ -26,6 +26,9 @@ jobs:
         run: |
           zig build --fetch
           zig build -Doptimize=ReleaseFast
+      - name: Install Raylib native library
+        if: matrix.example == 'auto-raylib'
+        run: brew install raylib
       - name: Resolve Zig package dependencies
         working-directory: examples/foreign/${{ matrix.example }}
         run: make deps
