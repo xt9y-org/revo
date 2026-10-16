@@ -3,10 +3,18 @@ ZIG ?= zig
 OPTIMIZE ?= Debug
 LIBEXT := $(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: all deps compile clean
+.PHONY: all deps compile run clean
 
-all: compile
-	$(REVO) main.rv
+all: run
+
+VULKAN_LOADER := $(shell command -v brew >/dev/null 2>&1 && brew --prefix vulkan-loader 2>/dev/null)/lib/libvulkan.1.dylib
+
+run: compile
+	@if [ "$(shell uname -s)" = "Darwin" ] && [ -f "$(VULKAN_LOADER)" ]; then \
+		SDL_VULKAN_LIBRARY="$(VULKAN_LOADER)" $(REVO) main.rv; \
+	else \
+		$(REVO) main.rv; \
+	fi
 
 deps:
 	$(ZIG) fetch --save=sdl3 'git+https://github.com/zmscode/sdl3-zig.git'

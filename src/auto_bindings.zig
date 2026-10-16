@@ -292,6 +292,15 @@ fn encode(comptime T: type, v: T, vm: *VM) anyerror!Value {
             return t;
         },
         .pointer => |p| {
+            // Returned const C character pointers conventionally represent
+            // borrowed, NUL-terminated strings (e.g. SDL_GetError()).
+            // Copy immediately into host-owned Revo storage: never pass the
+            // thread-local library buffer to Revo as a raw resource handle.
+            if (comptime isCString(T)) {
+                if (@intFromPtr(v) == 0) return Value.new.nil();
+                const text_ptr: [*:0]const u8 = @ptrCast(v);
+                return try valueString(vm, std.mem.span(text_ptr));
+            }
             if (p.size == .slice) {
                 if (p.child == u8) return try valueString(vm, v);
                 const t = try tableNew(vm);
