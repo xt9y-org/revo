@@ -1,10 +1,13 @@
-# Revo + SDL3 + Snektron/vulkan-zig
+# SDL3 + Snektron/vulkan-zig, no hand-authored Vulkan API shim
 
-Windowing is provided by SDL3; Vulkan API types, loader and dispatch
-are provided by [Snektron/vulkan-zig](https://github.com/Snektron/vulkan-zig) (pinned to the \`zig-0.17-compat\` branch).
-This smoke test initializes SDL video, creates a Vulkan window, loads Vulkan,
-creates an instance with SDL's required extensions, and creates a Vulkan
-surface. It then runs an event loop and destroys the surface, instance and window.
+Only `build.zig`, `build.zig.zon`, `Makefile`, and `main.rv` are
+present. The Zig build imports both libraries and **generates** the two Revo
+native modules:
+
+- `sdl_revo.so` reflects the SDL3 raw function namespace
+- `vulkan_revo.so` reflects the generated `vulkan-zig` root namespace
+
+No individual API function declarations or `vulkan.zig` wrapper are written.
 
 ```sh
 make deps
@@ -12,12 +15,14 @@ make compile REVO=../../../zig-out/bin/revo
 make REVO=../../../zig-out/bin/revo
 ```
 
-On macOS you must install a Vulkan loader and ICD (for example the Vulkan SDK
-with MoltenVK). Metal support alone does not provide a Vulkan implementation.
+This smoke test opens an SDL3 Vulkan-flagged window and initializes the
+system Vulkan loader. **It does not yet create a Vulkan instance, surface,
+device or swapchain.** Snektron/vulkan-zig's actual commands are dynamically
+loaded through dispatch tables, not global Zig functions. Revo's current
+automatic binder discovers ordinary public functions but cannot yet construct
+and call those runtime dispatch table methods, compile Zig generic loader
+functions, or marshal arbitrary Vulkan out-parameters. The `vk` import is
+present, but complete Vulkan dispatch requires extending the *generic
+interoperability infrastructure*, not adding application-specific wrappers.
 
-Snektron/vulkan-zig exposes *dispatch table methods* that require an instance
-and native Vulkan loader. The small `vulkan.zig` is application initialization
-code, not a hand-maintained binding declaration list. Revo calls its application
-operations, registered automatically by `autoBindings(API)`.
-
-This example does NOT render a triangle or set up a graphics device/swapchain.
+On macOS Vulkan requires MoltenVK and a compatible Vulkan loader/ICD.
