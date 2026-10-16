@@ -1,13 +1,27 @@
-# SDL3 window + genuine Vulkan instance/surface, implemented in Zig.
-# No manually listed native binding declarations.
-const vulkan = import "./vulkan_revo.so"
+# Generated imports of the actual Zig packages, without a vulkan.zig shim.
+const sdl = import "./sdl_revo.so"
+const vk = import "./vulkan_revo.so"
 
-if vulkan.open(960, 540) do
-    print("Vulkan instance + SDL3 surface created")
-    while vulkan.poll() do
-        sleep(1)
-    end
-    vulkan.close()
+if not sdl.SDL_Init(32) do
+    print("SDL3 initialization failed")
 else
-    print("Vulkan initialization failed; check the console")
+    # SDL_WINDOW_VULKAN = 0x10000000 (SDL3 header)
+    const window = sdl.SDL_CreateWindow("Revo / SDL3 / Vulkan", 960, 540, 268435456)
+    if not window do
+        print("SDL3 Vulkan window creation failed")
+    else
+        print("SDL3 Vulkan-capable window created")
+        if sdl.SDL_Vulkan_LoadLibrary(nil) do
+            print("Vulkan loader initialized")
+            while sdl.SDL_HasEvent(256) == false do
+                sdl.SDL_PumpEvents()
+                sdl.SDL_Delay(16)
+            end
+            sdl.SDL_Vulkan_UnloadLibrary()
+        else
+            print("Vulkan loader initialization failed")
+        end
+        sdl.SDL_DestroyWindow(window)
+    end
+    sdl.SDL_Quit()
 end
