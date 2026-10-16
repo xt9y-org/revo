@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     const bindings = generated.add("sdl3_revo.zig",
         \\const revo = @import("revo");
         \\const sdl = @import("sdl3");
-        \\pub export const revo_native_bindings_ex = revo.extension.autoBindings(sdl.raw);
+        \\pub export const revo_native_bindings_ex = revo.extension.autoCBindings(sdl.raw, "SDL_");
     );
 
     const library = b.addLibrary(.{
