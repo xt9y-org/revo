@@ -93,8 +93,13 @@ fn inspectName(comptime name: []const u8, comptime c_prefix: ?[]const u8) bool {
     if (std.mem.startsWith(u8, name, "__")) return false;
     if (c_prefix) |prefix| {
         if (!std.mem.startsWith(u8, name, prefix)) return false;
-        // C function names contain lowercase letters; SCREAMING_SNAKE_CASE
-        // preprocessor macros do not. This avoids evaluating broken macros.
+        // SDL's C functions use SDL_UpperCamelCase. Compiler macro helpers
+        // such as SDL_copyp use a lowercase initial letter and may expand to
+        // @compileError during translate-c. Reject these before @field.
+        if (name.len <= prefix.len) return false;
+        const initial = name[prefix.len];
+        if (initial < 'A' or initial > 'Z') return false;
+        // SCREAMING_SNAKE_CASE constants cannot be callable functions.
         for (name[prefix.len..]) |ch| {
             if (ch >= 'a' and ch <= 'z') return true;
         }
