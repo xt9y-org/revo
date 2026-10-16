@@ -313,14 +313,33 @@ fn Adapter(comptime f: anytype) type {
             const value = try encode(@TypeOf(result), result, vm);
             return .data(value);
         }
+
+        // Dynamically loaded native modules must use the stable C ABI.
+        // Passing a Zig []const Value and error-union HostResult directly
+        // between separately compiled Mach-O binaries corrupts arguments.
+        pub fn callC(vm_ptr: *anyopaque, argc: usize, argv: [*]const Value, out: *Value) callconv(.c) c_int {
+            const vm: *VM = @ptrCast(@alignCast(vm_ptr));
+            const result = call(argv[0..argc], vm) catch return revo.callable.c_err_other;
+            return switch (result) {
+                .ok => |v| blk: {
+                    out.* = v;
+                    break :blk revo.callable.c_ok;
+                },
+                .err => |e| switch (e) {
+                    .wrong_arity => revo.callable.c_err_arity,
+                    .type_error => revo.callable.c_err_type,
+                    else => revo.callable.c_err_other,
+                },
+            };
+        }
     };
 }
 
 /// Export every public Zig function whose signature can be represented.
 /// Unsupported functions are omitted; no unsafe coercion is attempted.
-fn bindingsFiltered(comptime Namespace: type, comptime c_prefix: ?[]const u8) [count(Namespace, c_prefix) + 1]revo.HostBinding {
+fn bindingsFiltered(comptime Namespace: type, comptime c_prefix: ?[]const u8) [count(Namespace, c_prefix) + 1]revo.callable.RevoBinding {
     @setEvalBranchQuota(2_000_000);
-    var out: [count(Namespace, c_prefix) + 1]revo.HostBinding = undefined;
+    var out: [count(Namespace, c_prefix) + 1]revo.callable.RevoBinding = undefined;
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
         if (comptime !inspectName(name, c_prefix)) continue;
@@ -329,23 +348,26 @@ fn bindingsFiltered(comptime Namespace: type, comptime c_prefix: ?[]const u8) [c
             const f = @field(Namespace, name);
             const Bridge = Adapter(f);
             const terminated = name ++ "\x00";
-            out[i] = ext.binding(terminated[0..name.len :0], ext.define(&Bridge.tags, Bridge.call));
+            out[i] = .{
+                .name = terminated[0..name.len :0],
+                .fn_ptr = @ptrCast(&Bridge.callC),
+            };
             i += 1;
         }
     }
-    out[i] = std.mem.zeroes(revo.HostBinding);
+    out[i] = std.mem.zeroes(revo.callable.RevoBinding);
     return out;
 }
 
 /// Reflect a Zig namespace with no manual function registration.
-pub fn bindingsFor(comptime Namespace: type) [count(Namespace, null) + 1]revo.HostBinding {
+pub fn bindingsFor(comptime Namespace: type) [count(Namespace, null) + 1]revo.callable.RevoBinding {
     return bindingsFiltered(Namespace, null);
 }
 
 /// Auto-bind the C functions of a translated package. For example "SDL_"
 /// selects SDL_* functions but skips C macro placeholders without evaluating
 /// their @compileError declarations. No per-function list is maintained.
-pub fn cBindingsFor(comptime Namespace: type, comptime prefix: []const u8) [count(Namespace, prefix) + 1]revo.HostBinding {
+pub fn cBindingsFor(comptime Namespace: type, comptime prefix: []const u8) [count(Namespace, prefix) + 1]revo.callable.RevoBinding {
     return bindingsFiltered(Namespace, prefix);
 }
 
