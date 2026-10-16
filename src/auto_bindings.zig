@@ -138,6 +138,7 @@ fn decode(comptime T: type, v: Value, vm: *VM, alloc: Allocator) anyerror!T {
         },
         .pointer => |p| {
             if (comptime isCString(T)) {
+                if (isNil(v) and p.size == .c) return @ptrFromInt(0);
                 const sid = v.asString() orelse return error.ExpectedString;
                 const copied = try alloc.dupeSentinel(u8, vm.stringValue(sid), 0);
                 return @ptrCast(copied.ptr);
