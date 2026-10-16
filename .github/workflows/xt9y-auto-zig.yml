@@ -32,3 +32,7 @@ jobs:
       - name: Compile Zig extension and Revo example
         working-directory: examples/foreign/${{ matrix.example }}
         run: make compile REVO="$GITHUB_WORKSPACE/zig-out/bin/revo"
+      - name: Headless native import smoke test
+        if: matrix.example != 'auto-raylib'
+        working-directory: examples/foreign/${{ matrix.example }}
+        run: "$GITHUB_WORKSPACE/zig-out/bin/revo" smoke.rv
