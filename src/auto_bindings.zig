@@ -90,8 +90,9 @@ fn count(comptime Namespace: type) usize {
     @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
-        const decl = @field(Namespace, name);
-        if (supportedFn(@TypeOf(decl)) or constantType(@TypeOf(decl))) n += 1;
+        // Do not evaluate imported global variables at comptime.
+        // Some translated C namespaces expose runtime extern variables.
+        if (supportedFn(@TypeOf(@field(Namespace, name)))) n += 1;
     }
     return n;
 }
@@ -298,15 +299,12 @@ pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBind
     var out: [count(Namespace) + 1]revo.HostBinding = undefined;
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
-        const f = @field(Namespace, name);
-        const terminated = name ++ "\x00";
-        if (comptime supportedFn(@TypeOf(f))) {
+        // Reflect type first; never evaluate a runtime global at comptime.
+        if (comptime supportedFn(@TypeOf(@field(Namespace, name)))) {
+            const f = @field(Namespace, name);
             const Bridge = Adapter(f);
+            const terminated = name ++ "\x00";
             out[i] = ext.binding(terminated[0..name.len :0], ext.define(&Bridge.tags, Bridge.call));
-            i += 1;
-        } else if (comptime constantType(@TypeOf(f))) {
-            const Bridge = Constant(f);
-            out[i] = ext.binding(terminated[0..name.len :0], ext.define(&Bridge.types, Bridge.call));
             i += 1;
         }
     }
