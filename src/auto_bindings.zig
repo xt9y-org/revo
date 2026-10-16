@@ -368,16 +368,19 @@ fn Adapter(comptime f: anytype) type {
         // between separately compiled Mach-O binaries corrupts arguments.
         pub fn callC(vm_ptr: *anyopaque, argc: usize, argv: [*]const Value, out: *Value) callconv(.c) c_int {
             const vm: *VM = @ptrCast(@alignCast(vm_ptr));
-            const result = call(argv[0..argc], vm) catch return revo.callable.c_err_other;
+            const api = revo_auto_api orelse return revo.callable.c_err_other;
+            const result = call(argv[0..argc], vm) catch |err|
+                return api.error_other(vm_ptr, @errorName(err));
             return switch (result) {
                 .ok => |v| blk: {
                     out.* = v;
                     break :blk revo.callable.c_ok;
                 },
                 .err => |e| switch (e) {
-                    .wrong_arity => revo.callable.c_err_arity,
-                    .type_error => revo.callable.c_err_type,
-                    else => revo.callable.c_err_other,
+                    .wrong_arity => |a| api.error_arity(vm_ptr, @intCast(a.got), @intCast(a.expected)),
+                    .type_error => api.error_other(vm_ptr, "native binding type mismatch"),
+                    .other => api.error_other(vm_ptr, "native binding conversion failed"),
+                    else => api.error_other(vm_ptr, "native binding error"),
                 },
             };
         }
