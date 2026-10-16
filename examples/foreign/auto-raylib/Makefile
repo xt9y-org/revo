@@ -8,6 +8,7 @@ all: compile
 
 deps:
 	$(ZIG) fetch --save=raylib_zig 'git+https://github.com/raylib-zig/raylib-zig.git?ref=zig-17'
+	$(ZIG) build --fetch
 
 compile:
 	$(ZIG) build -Doptimize=ReleaseFast
