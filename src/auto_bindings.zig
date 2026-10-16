@@ -90,6 +90,10 @@ fn count(comptime Namespace: type) usize {
     @setEvalBranchQuota(2_000_000);
     var n: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
+        // C translators emit implementation-only macro placeholders such as
+        // __nonnull = @compileError(...). Never touch those decls: even
+        // @TypeOf(@field(...)) instantiates the failing expression.
+        if (comptime std.mem.startsWith(u8, name, "__")) continue;
         // Do not evaluate imported global variables at comptime.
         // Some translated C namespaces expose runtime extern variables.
         if (supportedFn(@TypeOf(@field(Namespace, name)))) n += 1;
@@ -300,6 +304,10 @@ pub fn bindingsFor(comptime Namespace: type) [count(Namespace) + 1]revo.HostBind
     var out: [count(Namespace) + 1]revo.HostBinding = undefined;
     var i: usize = 0;
     inline for (@typeInfo(Namespace).@"struct".decl_names) |name| {
+        // C translators emit implementation-only macro placeholders such as
+        // __nonnull = @compileError(...). Never touch those decls: even
+        // @TypeOf(@field(...)) instantiates the failing expression.
+        if (comptime std.mem.startsWith(u8, name, "__")) continue;
         // Reflect type first; never evaluate a runtime global at comptime.
         if (comptime supportedFn(@TypeOf(@field(Namespace, name)))) {
             const f = @field(Namespace, name);
