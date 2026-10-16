@@ -27,6 +27,7 @@ jobs:
           zig build --fetch
           zig build -Doptimize=ReleaseFast
       - name: Resolve Zig package dependencies
+        if: matrix.example != 'auto-sdl3'
         working-directory: examples/foreign/${{ matrix.example }}
         run: make deps
       - name: Compile Zig extension and Revo example
