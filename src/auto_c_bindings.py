@@ -37,7 +37,7 @@ if scripts:
     used = set()
     for path in scripts:
         content = pathlib.Path(path).read_text(encoding="utf-8")
-        used.update(re.findall(r"\\b" + re.escape(prefix) + r"[A-Za-z0-9_]+\\b", content))
+        used.update(re.findall(r"\b" + re.escape(prefix) + r"[A-Za-z0-9_]+\b", content))
     names = [name for name in names if name in used]
     if not names:
         sys.exit("no referenced C functions matched translated extern declarations")
