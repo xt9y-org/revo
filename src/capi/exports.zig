@@ -13,7 +13,7 @@ const functions = vm.callable;
 const RevoBinding = functions.RevoBinding;
 const HostBinding = functions.HostBinding;
 const HostFunc = revo.baselib.host.HostFunc;
-const NativeApi = @import("../auto_binding_abi.zig").Api;
+const NativeApi = revo.auto_binding_abi.Api;
 
 /// Host-owned functions; injected into generated modules before first native call.
 const native_bridge_api: NativeApi = .{
