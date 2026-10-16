@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const revo_dep = b.dependency("revo", .{ .target = target, .optimize = optimize });
     const raylib_dep = b.dependency("raylib_zig", .{ .target = target, .optimize = optimize });
+    // Build the matching native Raylib commit, not Homebrew's older release.
+    const raylib_native = b.dependency("raylib", .{ .target = target, .optimize = optimize });
     // raylib-zig registers its module internally, rather than exposing it
     // through dependency.module(). Import the public source directly.
     const raylib_module = b.createModule(.{
@@ -33,9 +35,6 @@ pub fn build(b: *std.Build) void {
         }),
         .linkage = .dynamic,
     });
-    // raylib-zig's Zig 0.17 branch does not register a named `raylib`
-    // artifact for consumers. Link the native system library while importing
-    // the full Zig API directly from its repository.
-    lib.root_module.linkSystemLibrary("raylib", .{});
+    lib.root_module.linkLibrary(raylib_native.artifact("raylib"));
     b.getInstallStep().dependOn(&b.addInstallArtifact(lib, .{}).step);
 }
