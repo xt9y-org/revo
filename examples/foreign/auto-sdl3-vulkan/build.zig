@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
     const vk_source = generated.add("vulkan_revo.zig",
         \\const revo = @import("revo");
         \\const vk = @import("vulkan");
-        \\pub export const revo_native_bindings_ex = revo.extension.autoBindings(vk);
+        \\pub export const revo_bindings = revo.extension.autoBindings(vk);
     );
     const sources = .{ sdl_source, vk_source };
 
