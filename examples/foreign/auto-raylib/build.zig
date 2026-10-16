@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     const src = b.addWriteFiles().add("raylib_revo.zig",
         \\const revo = @import("revo");
         \\const raylib = @import("raylib");
-        \\pub export const revo_native_bindings_ex = revo.extension.autoBindings(raylib);
+        \\pub export const revo_bindings = revo.extension.autoBindings(raylib);
     );
     const lib = b.addLibrary(.{
         .name = "raylib_revo",
