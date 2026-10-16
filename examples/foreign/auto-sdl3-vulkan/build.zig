@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
         generated.add("sdl_revo.zig",
             \\const revo = @import("revo");
             \\const sdl = @import("sdl3");
-            \\pub export const revo_native_bindings_ex = revo.extension.autoBindings(sdl.raw);
+            \\pub export const revo_native_bindings_ex = revo.extension.autoCBindings(sdl.raw, "SDL_");
         ),
         generated.add("vulkan_revo.zig",
             \\const revo = @import("revo");
