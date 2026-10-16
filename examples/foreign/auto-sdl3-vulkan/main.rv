@@ -2,6 +2,9 @@
 const sdl = import "./sdl_revo.so"
 const vk = import "./vulkan_revo.so"
 
+# Calls a genuine vulkan-zig helper through the generated binding table.
+print(vk.makeApiVersion(0, 1, 0, 0))
+
 if not sdl.SDL_Init(sdl.SDL_INIT_VIDEO()) do
     print("SDL3 initialization failed")
 else
