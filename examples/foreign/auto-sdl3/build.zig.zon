@@ -9,7 +9,7 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "main.rv",
+        "main.rv", "smoke.rv",
         "Makefile",
         "README.md",
     },
