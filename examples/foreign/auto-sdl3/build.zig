@@ -8,13 +8,14 @@ pub fn build(b: *std.Build) void {
     const revo_dep = b.dependency("revo", .{ .target = target, .optimize = optimize });
     const sdl_dep = b.dependency("sdl3", .{ .target = target, .optimize = optimize });
 
-    // Generated source is intentionally not checked in or maintained.
-    const generated = b.addWriteFiles();
-    const bindings = generated.add("sdl3_revo.zig",
-        \\const revo = @import("revo");
-        \\const sdl = @import("sdl3");
-        \\pub export const revo_native_bindings_ex = revo.extension.autoCBindings(sdl.raw, "SDL_");
-    );
+    // Inspect the actual translate-c output. Its function declarations are
+    // safe to bind; its macro placeholders may expand to @compileError.
+    const raw = sdl_dep.module("sdl3").import_table.get("sdl3_raw").?;
+    const generate = b.addSystemCommand(&.{"python3"});
+    generate.addFileArg(revo_dep.path("src/auto_c_bindings.py"));
+    generate.addFileArg(raw.root_source_file.?);
+    const bindings = generate.addOutputFileArg("sdl3_revo.zig");
+    generate.addArgs(&.{ "sdl3", "SDL_" });
 
     const library = b.addLibrary(.{
         .name = "sdl3_revo",
