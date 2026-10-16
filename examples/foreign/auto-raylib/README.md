@@ -16,3 +16,8 @@ corresponding Revo numeric, table and string inputs. Unsupported functions
 are not exposed, rather than being imported unsafely. Zig 0.17 is required.
 
 See `../raylib/` for Revo's existing manually wrapped raylib reference example.
+
+The `raylib-zig` branch does not expose its underlying native Raylib
+artifact to downstream packages. The example links `raylib` as a system
+library while importing the Zig API from its GitHub dependency. On macOS,
+`make deps` installs Raylib through Homebrew if needed.
