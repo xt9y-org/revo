@@ -52,7 +52,7 @@ for name in names:
     lines.append(f'    pub const {name} = package.raw.{name};')
 lines += [
     '};',
-    'pub export const revo_native_bindings_ex = revo.extension.autoBindings(Functions);',
+    'pub export const revo_bindings = revo.extension.autoBindings(Functions);',
     '',
 ]
 pathlib.Path(output).write_text("\n".join(lines), encoding="utf-8")
