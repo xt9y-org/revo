@@ -1,7 +1,8 @@
 //! Compile-time Zig namespace to Revo host-call adapters.
 //! Reflect public function declarations; no per-function signature lists.
 //! Value marshalling: bool, numeric/enum, arrays, slices, structs, tagged
-//! unions, optionals and error unions. Native pointers remain opaque handles.
+//! unions, optionals and error unions. Native pointers remain opaque handles,
+//! except opt-in {value = ...} tables for writable C scalar pointers.
 //! Callbacks/comptime-specialized and allocator-dependent APIs need an
 //! explicit lifetime/specialization contract and are not auto-exported.
 const std = @import("std");
@@ -76,6 +77,28 @@ fn getResource(vm: *VM, val: Value) !?*anyopaque {
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .pointer => |p| p.child == u8 and p.attrs.@"const" and (p.size == .c or (p.size == .many and p.sentinel_ptr != null)),
+        else => false,
+    };
+}
+
+/// A writable C scalar pointer can be passed either as the existing native
+/// resource handle or as a Revo table {value = initial_value}. The latter
+/// gets temporary call-local storage and a value writeback after the call.
+///
+/// C signatures do not distinguish scalar pointers from arrays. Requiring
+/// an explicit table opts in to *single-element* storage only. Exclude 8-bit
+/// integers because those commonly represent mutable character buffers.
+fn mutableScalarPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |p| blk: {
+            if (p.attrs.@"const" or p.attrs.@"volatile") break :blk false;
+            if (p.size != .one and p.size != .c) break :blk false;
+            break :blk switch (@typeInfo(p.child)) {
+                .bool, .float => true,
+                .int => |i| i.bits >= 16 and i.bits <= 64,
+                else => false,
+            };
+        },
         else => false,
     };
 }
@@ -356,6 +379,17 @@ fn Adapter(comptime f: anytype) type {
             for (info.param_types, 0..) |param, i| types[i] = param.?;
             return @Tuple(&types);
         }
+        fn Scratch() type {
+            var types: [info.param_types.len]type = undefined;
+            for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                types[i] = if (mutableScalarPointer(T))
+                    @typeInfo(T).pointer.child
+                else
+                    void;
+            }
+            return @Tuple(&types);
+        }
         pub fn call(args: []const Value, vm: *VM) anyerror!HostResult {
             if (args.len != info.param_types.len)
                 return .errArity(args.len, info.param_types.len);
@@ -363,13 +397,42 @@ fn Adapter(comptime f: anytype) type {
             var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer arena.deinit();
             var native: Args() = undefined;
-            inline for (info.param_types, 0..) |p, i| {
-                native[i] = decode(p.?, args[i], vm, arena.allocator()) catch |err|
+            // Storage must outlive the native call. A distinct tuple element
+            // is reserved for every writable scalar pointer parameter.
+            var scratch: Scratch() = undefined;
+            inline for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                if (comptime mutableScalarPointer(T)) {
+                    if (args[i].isTable()) {
+                        scratch[i] = decode(
+                            @typeInfo(T).pointer.child,
+                            tableField(vm, args[i], "value") catch |err|
+                                return .other(@errorName(err)),
+                            vm,
+                            arena.allocator(),
+                        ) catch |err| return .other(@errorName(err));
+                        native[i] = @ptrCast(&scratch[i]);
+                        continue;
+                    }
+                }
+                // Native resource handles and all other pointer kinds retain
+                // their existing decoding behavior.
+                native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
                     return .other(@errorName(err));
             }
             const result = @call(.auto, f, native);
-            const value = try encode(@TypeOf(result), result, vm);
-            return .data(value);
+            // Write back before encoding the result, including when the C
+            // return value is merely an interaction/event status.
+            inline for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                if (comptime mutableScalarPointer(T)) {
+                    if (args[i].isTable()) {
+                        const value = try encode(@typeInfo(T).pointer.child, scratch[i], vm);
+                        try tablePut(vm, args[i], "value", value);
+                    }
+                }
+            }
+            return .data(try encode(@TypeOf(result), result, vm));
         }
 
         // Dynamically loaded native modules must use the stable C ABI.
@@ -450,4 +513,34 @@ test "automatically exports structural APIs without manual declarations" {
     try std.testing.expectEqualStrings("add", std.mem.span(bound[0].name));
     try std.testing.expectEqualStrings("transform", std.mem.span(bound[1].name));
     try std.testing.expectEqualStrings("sum", std.mem.span(bound[2].name));
+}
+
+test "mutable scalar C pointers are opt-in and limited to numeric scalars" {
+    try std.testing.expect(mutableScalarPointer([*c]f32));
+    try std.testing.expect(mutableScalarPointer([*c]bool));
+    try std.testing.expect(mutableScalarPointer([*c]c_int));
+    try std.testing.expect(mutableScalarPointer(*f64));
+    try std.testing.expect(!mutableScalarPointer([*c]const f32));
+    try std.testing.expect(!mutableScalarPointer([*c]u8)); // text buffer, not a scalar
+    try std.testing.expect(!mutableScalarPointer([*c]const u8));
+    try std.testing.expect(!mutableScalarPointer([*c]anyopaque));
+    try std.testing.expect(!mutableScalarPointer([*]f32)); // arrays stay resources
+}
+
+test "raygui-style pointer signatures remain auto-exported" {
+    const Rect = extern struct { x: f32, y: f32, width: f32, height: f32 };
+    const Fixture = struct {
+        pub fn GuiSlider(_: Rect, _: [*c]const u8, _: [*c]const u8, value: [*c]f32, _: f32, _: f32) callconv(.c) c_int {
+            value[0] += 0.25;
+            return 1;
+        }
+        pub fn GuiCheckBox(_: Rect, _: [*c]const u8, checked: [*c]bool) callconv(.c) c_int {
+            checked[0] = !checked[0];
+            return 1;
+        }
+    };
+    const bindings = comptime cBindingsFor(Fixture, "Gui");
+    try std.testing.expectEqual(@as(usize, 3), bindings.len);
+    try std.testing.expectEqualStrings("GuiSlider", std.mem.span(bindings[0].name));
+    try std.testing.expectEqualStrings("GuiCheckBox", std.mem.span(bindings[1].name));
 }
