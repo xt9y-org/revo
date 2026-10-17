@@ -1,7 +1,8 @@
 //! Compile-time Zig namespace to Revo host-call adapters.
 //! Reflect public function declarations; no per-function signature lists.
 //! Value marshalling: bool, numeric/enum, arrays, slices, structs, tagged
-//! unions, optionals and error unions. Native pointers remain opaque handles.
+//! unions, optionals and error unions. Native pointers remain opaque handles,
+//! except opt-in {value = ...} tables for writable C scalar pointers.
 //! Callbacks/comptime-specialized and allocator-dependent APIs need an
 //! explicit lifetime/specialization contract and are not auto-exported.
 const std = @import("std");
@@ -76,6 +77,28 @@ fn getResource(vm: *VM, val: Value) !?*anyopaque {
 fn isCString(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .pointer => |p| p.child == u8 and p.attrs.@"const" and (p.size == .c or (p.size == .many and p.sentinel_ptr != null)),
+        else => false,
+    };
+}
+
+/// A writable C scalar pointer can be passed either as the existing native
+/// resource handle or as a Revo table {value = initial_value}. The latter
+/// gets temporary call-local storage and a value writeback after the call.
+///
+/// C signatures do not distinguish scalar pointers from arrays. Requiring
+/// an explicit table opts in to *single-element* storage only. Exclude 8-bit
+/// integers because those commonly represent mutable character buffers.
+fn mutableScalarPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |p| blk: {
+            if (p.attrs.@"const" or p.attrs.@"volatile") break :blk false;
+            if (p.size != .one and p.size != .c) break :blk false;
+            break :blk switch (@typeInfo(p.child)) {
+                .bool, .float => true,
+                .int => |i| i.bits >= 16 and i.bits <= 64,
+                else => false,
+            };
+        },
         else => false,
     };
 }
@@ -356,6 +379,17 @@ fn Adapter(comptime f: anytype) type {
             for (info.param_types, 0..) |param, i| types[i] = param.?;
             return @Tuple(&types);
         }
+        fn Scratch() type {
+            var types: [info.param_types.len]type = undefined;
+            for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                types[i] = if (mutableScalarPointer(T))
+                    @typeInfo(T).pointer.child
+                else
+                    void;
+            }
+            return @Tuple(&types);
+        }
         pub fn call(args: []const Value, vm: *VM) anyerror!HostResult {
             if (args.len != info.param_types.len)
                 return .errArity(args.len, info.param_types.len);
@@ -363,13 +397,45 @@ fn Adapter(comptime f: anytype) type {
             var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer arena.deinit();
             var native: Args() = undefined;
-            inline for (info.param_types, 0..) |p, i| {
-                native[i] = decode(p.?, args[i], vm, arena.allocator()) catch |err|
-                    return .other(@errorName(err));
+            // Storage must outlive the native call. A distinct tuple element
+            // is reserved for every writable scalar pointer parameter.
+            var scratch: Scratch() = undefined;
+            inline for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                if (comptime mutableScalarPointer(T)) {
+                    if (args[i].isTable()) {
+                        scratch[i] = decode(
+                            @typeInfo(T).pointer.child,
+                            tableField(vm, args[i], "value") catch |err|
+                                return .other(@errorName(err)),
+                            vm,
+                            arena.allocator(),
+                        ) catch |err| return .other(@errorName(err));
+                        native[i] = @ptrCast(&scratch[i]);
+                    } else {
+                        // Existing native resource handles still work.
+                        native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
+                            return .other(@errorName(err));
+                    }
+                } else {
+                    // Other pointer kinds keep their prior conversion path.
+                    native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
+                        return .other(@errorName(err));
+                }
             }
             const result = @call(.auto, f, native);
-            const value = try encode(@TypeOf(result), result, vm);
-            return .data(value);
+            // Write back before encoding the result, including when the C
+            // return value is merely an interaction/event status.
+            inline for (info.param_types, 0..) |param, i| {
+                const T = param.?;
+                if (comptime mutableScalarPointer(T)) {
+                    if (args[i].isTable()) {
+                        const value = try encode(@typeInfo(T).pointer.child, scratch[i], vm);
+                        try tablePut(vm, args[i], "value", value);
+                    }
+                }
+            }
+            return .data(try encode(@TypeOf(result), result, vm));
         }
 
         // Dynamically loaded native modules must use the stable C ABI.
@@ -450,4 +516,126 @@ test "automatically exports structural APIs without manual declarations" {
     try std.testing.expectEqualStrings("add", std.mem.span(bound[0].name));
     try std.testing.expectEqualStrings("transform", std.mem.span(bound[1].name));
     try std.testing.expectEqualStrings("sum", std.mem.span(bound[2].name));
+}
+
+test "mutable scalar C pointers are opt-in and limited to numeric scalars" {
+    try std.testing.expect(mutableScalarPointer([*c]f32));
+    try std.testing.expect(mutableScalarPointer([*c]bool));
+    try std.testing.expect(mutableScalarPointer([*c]c_int));
+    try std.testing.expect(mutableScalarPointer(*f64));
+    try std.testing.expect(!mutableScalarPointer([*c]const f32));
+    try std.testing.expect(!mutableScalarPointer([*c]u8)); // text buffer, not a scalar
+    try std.testing.expect(!mutableScalarPointer([*c]const u8));
+    try std.testing.expect(!mutableScalarPointer([*c]anyopaque));
+    try std.testing.expect(!mutableScalarPointer([*]f32)); // arrays stay resources
+}
+
+test "raygui-style pointer signatures remain auto-exported" {
+    const Rect = extern struct { x: f32, y: f32, width: f32, height: f32 };
+    const Fixture = struct {
+        pub fn GuiSlider(_: Rect, _: [*c]const u8, _: [*c]const u8, value: [*c]f32, _: f32, _: f32) callconv(.c) c_int {
+            value[0] += 0.25;
+            return 1;
+        }
+        pub fn GuiCheckBox(_: Rect, _: [*c]const u8, checked: [*c]bool) callconv(.c) c_int {
+            checked[0] = !checked[0];
+            return 1;
+        }
+    };
+    const bindings = comptime cBindingsFor(Fixture, "Gui");
+    try std.testing.expectEqual(@as(usize, 3), bindings.len);
+    var has_slider = false;
+    var has_checkbox = false;
+    for (bindings[0 .. bindings.len - 1]) |binding| {
+        const name = std.mem.span(binding.name);
+        if (std.mem.eql(u8, name, "GuiSlider")) has_slider = true;
+        if (std.mem.eql(u8, name, "GuiCheckBox")) has_checkbox = true;
+    }
+    try std.testing.expect(has_slider);
+    try std.testing.expect(has_checkbox);
+}
+
+const RefFixture = struct {
+    var first: Value = Value.new.nil();
+    var second: Value = Value.new.nil();
+    var writes: usize = 0;
+
+    fn get(_: *anyopaque, value: Value, key: ?[*]const u8, n: usize, out: *Value) callconv(.c) bool {
+        if (key == null or !std.mem.eql(u8, key.?[0..n], "value")) return false;
+        out.* = switch (value.asTable() orelse return false) {
+            11 => first,
+            22 => second,
+            else => return false,
+        };
+        return true;
+    }
+
+    fn set(_: *anyopaque, value: Value, key: ?[*]const u8, n: usize, item: Value) callconv(.c) bool {
+        if (key == null or !std.mem.eql(u8, key.?[0..n], "value")) return false;
+        switch (value.asTable() orelse return false) {
+            11 => first = item,
+            22 => second = item,
+            else => return false,
+        }
+        writes += 1;
+        return true;
+    }
+
+    fn resource(_: *anyopaque, _: Value) callconv(.c) ?*anyopaque {
+        return null;
+    }
+
+    pub fn adjust(value: [*c]f32, amount: f32) callconv(.c) c_int {
+        value[0] += amount;
+        return 1;
+    }
+    pub fn toggle(checked: [*c]bool) callconv(.c) c_int {
+        checked[0] = !checked[0];
+        return 1;
+    }
+    pub fn multi(value: [*c]f32, count: [*c]c_int) callconv(.c) void {
+        value[0] += 0.5;
+        count[0] += 3;
+    }
+};
+
+test "auto C adapters write scalar float bool and int refs back to Revo tables" {
+    var api: BridgeApi = undefined;
+    api.table_get_name = &RefFixture.get;
+    api.table_set_name = &RefFixture.set;
+    api.resource_ptr = &RefFixture.resource;
+
+    const previous = revo_auto_api;
+    revo_auto_api = &api;
+    defer revo_auto_api = previous;
+
+    // The mock table IDs stand in for VM-owned Revo tables; none of the
+    // native callback functions dereference this opaque VM pointer.
+    const vm: *VM = @ptrFromInt(0x1000);
+    RefFixture.first = Value.new.num(0.5);
+    RefFixture.second = Value.new.num(2);
+    RefFixture.writes = 0;
+
+    const float_args = [_]Value{ Value.new.table(11), Value.new.num(0.25) };
+    _ = try Adapter(RefFixture.adjust).call(&float_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.75), RefFixture.first.asNumOpt().?, 0.00001);
+
+    RefFixture.first = Value.new.boolean(true);
+    const bool_args = [_]Value{Value.new.table(11)};
+    _ = try Adapter(RefFixture.toggle).call(&bool_args, vm);
+    try std.testing.expectEqual(revo.CoreAtoms.atomId(.false), RefFixture.first.asAtom().?);
+
+    RefFixture.first = Value.new.num(1.0);
+    const int_and_float_args = [_]Value{ Value.new.table(11), Value.new.table(22) };
+    _ = try Adapter(RefFixture.multi).call(&int_and_float_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), RefFixture.first.asNumOpt().?, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f64, 5.0), RefFixture.second.asNumOpt().?, 0.00001);
+    try std.testing.expectEqual(@as(usize, 4), RefFixture.writes);
+
+    // The old opaque/native pointer route is unchanged; no Revo writeback.
+    var native_value: f32 = 1.0;
+    const native_args = [_]Value{ Value.new.@"opaque"(&native_value), Value.new.num(0.125) };
+    _ = try Adapter(RefFixture.adjust).call(&native_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.125), native_value, 0.00001);
+    try std.testing.expectEqual(@as(usize, 4), RefFixture.writes);
 }
