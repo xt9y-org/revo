@@ -412,13 +412,16 @@ fn Adapter(comptime f: anytype) type {
                             arena.allocator(),
                         ) catch |err| return .other(@errorName(err));
                         native[i] = @ptrCast(&scratch[i]);
-                        continue;
+                    } else {
+                        // Existing native resource handles still work.
+                        native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
+                            return .other(@errorName(err));
                     }
+                } else {
+                    // Other pointer kinds keep their prior conversion path.
+                    native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
+                        return .other(@errorName(err));
                 }
-                // Native resource handles and all other pointer kinds retain
-                // their existing decoding behavior.
-                native[i] = decode(T, args[i], vm, arena.allocator()) catch |err|
-                    return .other(@errorName(err));
             }
             const result = @call(.auto, f, native);
             // Write back before encoding the result, including when the C
