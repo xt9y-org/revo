@@ -544,3 +544,88 @@ test "raygui-style pointer signatures remain auto-exported" {
     try std.testing.expectEqualStrings("GuiSlider", std.mem.span(bindings[0].name));
     try std.testing.expectEqualStrings("GuiCheckBox", std.mem.span(bindings[1].name));
 }
+
+const RefFixture = struct {
+    var first: Value = Value.new.nil();
+    var second: Value = Value.new.nil();
+    var writes: usize = 0;
+
+    fn get(_: *anyopaque, value: Value, key: ?[*]const u8, n: usize, out: *Value) callconv(.c) bool {
+        if (key == null or !std.mem.eql(u8, key.?[0..n], "value")) return false;
+        out.* = switch (value.asTable() orelse return false) {
+            11 => first,
+            22 => second,
+            else => return false,
+        };
+        return true;
+    }
+
+    fn set(_: *anyopaque, value: Value, key: ?[*]const u8, n: usize, item: Value) callconv(.c) bool {
+        if (key == null or !std.mem.eql(u8, key.?[0..n], "value")) return false;
+        switch (value.asTable() orelse return false) {
+            11 => first = item,
+            22 => second = item,
+            else => return false,
+        }
+        writes += 1;
+        return true;
+    }
+
+    fn resource(_: *anyopaque, _: Value) callconv(.c) ?*anyopaque {
+        return null;
+    }
+
+    pub fn adjust(value: [*c]f32, amount: f32) callconv(.c) c_int {
+        value[0] += amount;
+        return 1;
+    }
+    pub fn toggle(checked: [*c]bool) callconv(.c) c_int {
+        checked[0] = !checked[0];
+        return 1;
+    }
+    pub fn multi(value: [*c]f32, count: [*c]c_int) callconv(.c) void {
+        value[0] += 0.5;
+        count[0] += 3;
+    }
+};
+
+test "auto C adapters write scalar float bool and int refs back to Revo tables" {
+    var api: BridgeApi = undefined;
+    api.table_get_name = &RefFixture.get;
+    api.table_set_name = &RefFixture.set;
+    api.resource_ptr = &RefFixture.resource;
+
+    const previous = revo_auto_api;
+    revo_auto_api = &api;
+    defer revo_auto_api = previous;
+
+    // The mock table IDs stand in for VM-owned Revo tables; none of the
+    // native callback functions dereference this opaque VM pointer.
+    const vm: *VM = @ptrFromInt(0x1000);
+    RefFixture.first = Value.new.num(0.5);
+    RefFixture.second = Value.new.num(2);
+    RefFixture.writes = 0;
+
+    const float_args = [_]Value{ Value.new.table(11), Value.new.num(0.25) };
+    _ = try Adapter(RefFixture.adjust).call(&float_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.75), RefFixture.first.asNumOpt().?, 0.00001);
+
+    RefFixture.first = Value.new.boolean(true);
+    const bool_args = [_]Value{Value.new.table(11)};
+    _ = try Adapter(RefFixture.toggle).call(&bool_args, vm);
+    try std.testing.expectEqual(revo.CoreAtoms.atomId(.false), RefFixture.first.asAtom().?);
+
+    RefFixture.first = Value.new.num(1.0);
+    const int_and_float_args = [_]Value{ Value.new.table(11), Value.new.table(22) };
+    _ = try Adapter(RefFixture.multi).call(&int_and_float_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), RefFixture.first.asNumOpt().?, 0.00001);
+    try std.testing.expectApproxEqAbs(@as(f64, 5.0), RefFixture.second.asNumOpt().?, 0.00001);
+    try std.testing.expectEqual(@as(usize, 4), RefFixture.writes);
+
+    // The old opaque/native pointer route is unchanged; no Revo writeback.
+    var native_value: f32 = 1.0;
+    const native_args = [_]Value{ Value.new.@"opaque"(&native_value), Value.new.num(0.125) };
+    _ = try Adapter(RefFixture.adjust).call(&native_args, vm);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.125), native_value, 0.00001);
+    try std.testing.expectEqual(@as(usize, 4), RefFixture.writes);
+}
