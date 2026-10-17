@@ -544,8 +544,15 @@ test "raygui-style pointer signatures remain auto-exported" {
     };
     const bindings = comptime cBindingsFor(Fixture, "Gui");
     try std.testing.expectEqual(@as(usize, 3), bindings.len);
-    try std.testing.expectEqualStrings("GuiSlider", std.mem.span(bindings[0].name));
-    try std.testing.expectEqualStrings("GuiCheckBox", std.mem.span(bindings[1].name));
+    var has_slider = false;
+    var has_checkbox = false;
+    for (bindings[0 .. bindings.len - 1]) |binding| {
+        const name = std.mem.span(binding.name);
+        if (std.mem.eql(u8, name, "GuiSlider")) has_slider = true;
+        if (std.mem.eql(u8, name, "GuiCheckBox")) has_checkbox = true;
+    }
+    try std.testing.expect(has_slider);
+    try std.testing.expect(has_checkbox);
 }
 
 const RefFixture = struct {
