@@ -63,14 +63,6 @@ pub const Impl = struct {
         return .parked();
     }
 
-    pub fn gensym(vm: *VM) !host.HostResult {
-        const n = vm.runtime.gensym_counter;
-        vm.runtime.gensym_counter += 1;
-        const name = try vm.runtime.alloc.print("__gensym_{d}", .{n});
-        defer vm.runtime.alloc.free(name);
-        return .data(try vm.ownValueStringNoDedup(name));
-    }
-
     pub fn hash(vm: *VM, val: host.ArgTypes.any) !host.HostResult {
         return .data(Value.new.num(val.hash(vm)));
     }
@@ -247,16 +239,18 @@ test "fmt rendering is recursive" {
 pub fn dotest(args: []const Value, vm: *VM) !host.HostResult {
     const name = args[0].asString().?;
     const body = args[1].asFunction().?;
+
     var buf: [128]u8 = undefined;
     var w = revo.stdout().writerStreaming(vm.runtime.io, &buf);
     defer w.flush() catch {};
 
     w.interface.print("* test \"{s}\"...\n", .{try vm.strings.get(name)}) catch {};
     w.flush() catch {};
+
     const res = vm.callFunctionParts(Value.new.function(body), null, &[0]Value{}, null) catch |err| {
         const failure = vm.runFailure(err);
-        failure.render(vm.runtime.alloc, &w.interface, vm.currentDebugSource() orelse "", vm.runtime.supports_color) catch {
-            try revo.term.printError(&w.interface, vm.runtime.supports_color, "hard-fail - {s}", .{@errorName(err)});
+        failure.render(&w.interface, vm.currentDebugSource() orelse "", vm.runtime.supports_color) catch {
+            try revo.term.printError(&w.interface, vm.runtime.supports_color, "hard fail! {s}", .{@errorName(err)});
             return .data(Value.new.nil());
         };
         return .data(Value.new.nil());
@@ -285,11 +279,13 @@ pub fn dosuite(args: []const Value, vm: *VM) !host.HostResult {
     var sbuf: [128]u8 = undefined;
     var sw = revo.stdout().writerStreaming(vm.runtime.io, &sbuf);
     defer sw.flush() catch {};
+
     _ = vm.callFunctionParts(Value.new.function(body), null, &[0]Value{}, null) catch |err| {
         const failure = vm.runFailure(err);
         var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
         defer buf.deinit();
-        failure.render(vm.runtime.alloc, &buf.writer, vm.currentDebugSource() orelse "", vm.runtime.supports_color) catch {
+
+        failure.render(&buf.writer, vm.currentDebugSource() orelse "", vm.runtime.supports_color) catch {
             sw.interface.print("* suite hard-failed: \"{s}\"\n", .{@errorName(err)}) catch {};
             return .coreAtom(.nil);
         };
@@ -373,7 +369,7 @@ fn asStackIndex(value: Value) ?usize {
     return revo.asIndex(num) catch null;
 }
 
-/// > chan(capacity?: num) -> table
+/// > chan(capacity?: number) -> table
 /// creates a new channel with optional buffer size
 ///     chan()        # unbuffered
 ///     chan(5)       # buffer of 5
@@ -493,7 +489,7 @@ pub fn number_(args: []const Value, vm: *VM) !host.HostResult {
         const parsed = try std.fmt.parseFloat(f64, vm.stringValue(id));
         return host.HostResult.Ok(vm, Value.new.num(parsed));
     }
-    return .errType(0, "num, string", typeof(args[0], vm));
+    return .errType(0, "number, string", typeof(args[0], vm));
 }
 
 /// > assert(what: any) -> what
@@ -700,14 +696,6 @@ pub fn input(args: []const Value, vm: *VM) !host.HostResult {
     }
 }
 
-test "gensym produces different values on each call" {
-    try revo.lang.test_helpers.topAtom(
-        \\ const a = gensym()
-        \\ const b = gensym()
-        \\ a != b
-    , "true");
-}
-
 pub fn cwd(args: []const Value, vm: *VM) !host.HostResult {
     _ = args;
     const cwd_path = try std.Io.Dir.cwd().realPathFileAlloc(vm.runtime.io, ".", vm.runtime.alloc);
@@ -882,23 +870,10 @@ pub fn registerTypePredicates(vm: *VM) !void {
         try vm.user_globals.put(atom, val);
         try vm.builtin_globals.put(atom, val);
     }
-    const is_number = struct {
-        fn number(args: []const Value, _: *VM) !host.HostResult {
-            for (args) |arg| {
-                if (!arg.isNumber()) return ._bool(false);
-            }
-            return ._bool(true);
-        }
-    }.number;
-    const id = try vm.callable.create(.{ .host = host.define(&[_]host.ParamType{.any}, is_number) });
-    const atom = try vm.internAtom("num?");
-    const val = Value.new.function(id);
-    try vm.user_globals.put(atom, val);
-    try vm.builtin_globals.put(atom, val);
 }
 
 test "type predicates" {
-    try testing.topTrue("num?(42)");
+    try testing.topTrue("number?(42)");
     try testing.topTrue("string?(\"hello\")");
     try testing.topTrue("table?({})");
     try testing.topTrue("atom?(:ok)");
@@ -912,7 +887,7 @@ test "debug_info() links its nested flags table without a stale pointer" {
     // is written through a dangling pointer.
     try testing.topTrue("table?(debug_info().flags)");
     try testing.topFalse("debug_info().flags.dump");
-    try testing.topTrue("num?(debug_info().stack_depth)");
+    try testing.topTrue("number?(debug_info().stack_depth)");
 }
 
 test "array sort" {

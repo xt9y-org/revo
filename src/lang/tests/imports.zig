@@ -126,7 +126,7 @@ test "imported module assignment is private to module cache" {
 test "imported module members work  and are typed" {
     var m = try t.TmpMod.init(&.{
         .{ .path = "calc.rv", .data =
-        \\ pub fn double(n: num) n * 2
+        \\ pub fn double(n: number) n * 2
         \\ pub const version = 3
         \\ const hidden = 99
         },
@@ -158,34 +158,6 @@ test "imported module members work  and are typed" {
         \\ const m = import "./calc"
         \\ m.hidden
     );
-}
-
-test "imported proc macros expand, unknown ones error" {
-    var m = try t.TmpMod.init(&.{
-        .{ .path = "macs.rv", .data =
-        \\ pub proc answer!(iter) do
-        \\   {{:number, 42}}
-        \\ end
-        },
-    });
-    defer m.deinit();
-
-    try t.topNumberInDir(m.dir,
-        \\ const m = import "./macs"
-        \\ m.answer!()
-    , 42);
-
-    try t.expectExpandErrorInDir(m.dir,
-        \\ const m = import "./macs"
-        \\ m.nope!(1)
-    , "unknown macro `m.nope!`");
-}
-
-test "unknown macro calls are compile errors" {
-    // yes this happens sometimes and its REALLY unfun
-    try t.expectExpandError(
-        \\ nosuchmacro!(1)
-    , "unknown macro `nosuchmacro!`");
 }
 
 test "imported qualified types check values" {
@@ -230,7 +202,7 @@ test "imported qualified types check values" {
 test "imported unknown member calls are errors" {
     var m = try t.TmpMod.init(&.{
         .{ .path = "calc.rv", .data =
-        \\ pub fn double(n: num) n * 2
+        \\ pub fn double(n: number) n * 2
         \\ pub const version = 3
         },
     });

@@ -19,7 +19,7 @@ test "compile report carries span and message" {
 
 test "compile report includes function call argument detail" {
     try t.expectSemanticFailure(
-        \\ const id = fn(x: int) x
+        \\ const id = fn(x: number) x
         \\ id("nope")
     ,
         2,
@@ -54,6 +54,14 @@ test "forward reference to a value is rejected at compile time" {
         \\ const value = 42
         \\ read()
     , "unknown-name");
+}
+
+test "forward sibling fn resolves" {
+    try t.topNumber(
+        \\ const g = fn() do f() end
+        \\ const f = fn() 42
+        \\ g()
+    , 42);
 }
 
 test "runtime report includes not-a-function detail" {
@@ -102,7 +110,6 @@ test "runtime renderer includes source path" {
             var buf = std.Io.Writer.Allocating.init(alloc);
             defer buf.deinit();
             try failure.renderAt(
-                alloc,
                 &buf.writer,
                 failure.report.source_name orelse "<source>",
                 source,
@@ -138,7 +145,7 @@ test "runtime renderer includes stack trace call chain" {
         .err => |failure| {
             var buf = std.Io.Writer.Allocating.init(alloc);
             defer buf.deinit();
-            try failure.render(alloc, &buf.writer, source, false);
+            try failure.render(&buf.writer, source, false);
 
             try std.testing.expect(std.mem.find(u8, buf.written(), "stack trace:") != null);
             try std.testing.expect(std.mem.find(u8, buf.written(), "0: b at <source>:2:") != null);

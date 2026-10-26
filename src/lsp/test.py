@@ -473,7 +473,9 @@ async def test_typed_table_hover(client: LanguageClient):
             )
         )
         await client.wait_for_notification("textDocument/publishDiagnostics")
-        name_col = wrapper_text.split("\n")[1].index("add")  # `pub const add: ...`
+
+        name_col = wrapper_text.split("\n")[1].index(
+            "add")  # `pub const add: ...`
         result = await client.text_document_hover_async(
             params=HoverParams(
                 position=Position(line=1, character=name_col + 1),
@@ -678,7 +680,7 @@ async def test_multiple_errors_keep_own_messages(client: LanguageClient):
         params=DidOpenTextDocumentParams(
             text_document=TextDocumentItem(
                 uri=uri, language_id="revo", version=1,
-                text='let t = { name = "me" }\nt.a\nlet x: num = "hi"\n',
+                text='let t = { name = "me" }\nt.a\nlet x: number = "hi"\n',
             )
         )
     )
@@ -702,7 +704,7 @@ async def test_match_warning_severity_and_code(client: LanguageClient):
         params=DidOpenTextDocumentParams(
             text_document=TextDocumentItem(
                 uri=uri, language_id="revo", version=1,
-                text='type Res = {:ok, num} | {:err, string}\nlet x: Res = {:ok, 42}\nmatch x\n| {:ok, v} => v\n',
+                text='type Res = {:ok, number} | {:err, string}\nlet x: Res = {:ok, 42}\nmatch x\n| {:ok, v} => v\n',
             )
         )
     )
@@ -910,32 +912,6 @@ async def test_table_destructuring_no_diag(client: LanguageClient):
         len(diags)}: {[d.message for d in diags]}"
 
 
-@pytest.mark.skip(reason="TODO")
-@pytest.mark.asyncio(loop_scope="module")
-async def test_will_save_wait_until(client: LanguageClient):
-    """will save wait until should allow edits before saving"""
-    result = await client.text_document_will_save_wait_until_async(
-        params=WillSaveTextDocumentParams(
-            text_document=TextDocumentIdentifier(uri=TEST_URI),
-            reason=TextDocumentSaveReason.Manual,
-        ),
-    )
-    assert result is not None
-
-
-@pytest.mark.skip(reason="TODO")
-@pytest.mark.asyncio(loop_scope="module")
-async def test_formatting(client: LanguageClient):
-    """formatting should produce some edits"""
-    result = await client.text_document_formatting_async(
-        params=DocumentFormattingParams(
-            text_document=TextDocumentIdentifier(uri=TEST_URI),
-            options={"tabSize": 2, "insertSpaces": True},
-        ),
-    )
-    assert result is not None
-
-
 @pytest.mark.asyncio(loop_scope="module")
 async def test_inlay_hints(client: LanguageClient):
     """inlay hints should show inferred types"""
@@ -956,7 +932,7 @@ async def test_inlay_hints(client: LanguageClient):
     )
     print("  inlay hints:", result)
     assert result is not None
-    # `x` is `let x = 42` -> should have a type hint ": num"
+    # `x` is `let x = 42` -> should have a type hint ": number"
     found_x = [h for h in result if h.position.line == 0]
     assert len(found_x) >= 1, f"expected hint for x, got hints: {result}"
     hint = found_x[0]
@@ -1025,10 +1001,10 @@ async def test_code_action(client: LanguageClient):
         assert any("inline" in t.lower() for t in titles)
 
 
-ONE_RV_CONTENT = """pub fn hi(a: num, b: num) -> num
+ONE_RV_CONTENT = """pub fn hi(a: number, b: number) -> number
   a * b
 
-pub const CT: int = 5
+pub const CT: number = 5
 """
 
 TWO_RV_CONTENT = """import "one.rv"
@@ -1078,7 +1054,7 @@ async def test_import_hover(client: LanguageClient):
         assert contents is not None
         assert "hi" in contents.value, f"expected 'hi' in hover, got: {
             contents.value}"
-        assert "fn hi" in contents.value or "num" in contents.value, (
+        assert "fn hi" in contents.value or "number" in contents.value, (
             f"expected fn signature in hover, got: {contents.value}"
         )
 
@@ -1139,45 +1115,6 @@ async def test_bare_import_completion_after_dot(client: LanguageClient):
         labels = [i.label for i in items]
         assert "f" in labels, f"expected 'f' completion, got: {labels}"
         assert "v" in labels, f"expected 'v' completion, got: {labels}"
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_module_hover_shows_macros_not_prelude(client: LanguageClient):
-    """module hover lists dep macros once, without prelude leakage"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with open(os.path.join(tmpdir, "a.rv"), "w") as f:
-            f.write(
-                'pub let v = 5\n\npub fn f() 10\n\npub proc hi!(m) do\n\tm.items\nend\n')
-        user_path = os.path.join(tmpdir, "b.rv")
-        user_text = 'import "a"\na.hi!(:ok)\n'
-        with open(user_path, "w") as f:
-            f.write(user_text)
-        dep_uri = "file://" + os.path.join(tmpdir, "a.rv")
-        client.text_document_did_open(params=DidOpenTextDocumentParams(
-            text_document=TextDocumentItem(
-                uri=dep_uri, language_id="revo", version=1,
-                text='pub let v = 5\n\npub fn f() 10\n\npub proc hi!(m) do\n\tm.items\nend\n'),
-        ))
-        await client.wait_for_notification("textDocument/publishDiagnostics")
-        user_uri = "file://" + user_path
-        client.text_document_did_open(params=DidOpenTextDocumentParams(
-            text_document=TextDocumentItem(
-                uri=user_uri, language_id="revo", version=1, text=user_text),
-        ))
-        await client.wait_for_notification("textDocument/publishDiagnostics")
-        result = await client.text_document_hover_async(
-            params=HoverParams(
-                position=Position(line=1, character=0),
-                text_document=TextDocumentIdentifier(uri=user_uri),
-            )
-        )
-        assert result is not None, "hover on module name returned None"
-        value = result.contents.value
-        print("  module hover:", repr(value))
-        assert "hi!" in value, f"expected macro in hover, got: {value}"
-        assert "ok?!" not in value, f"prelude leaked into hover: {value}"
-        assert value.count(
-            "proc hi!(m) do") == 1, f"expected no duplicates, got: {value}"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -1343,7 +1280,7 @@ async def test_import_hover_module_name(client: LanguageClient):
         assert contents.value.count("fn hi(") == 1, (
             f"expected no duplicate members, got: {contents.value}"
         )
-        assert "const CT: int = 5" in contents.value, (
+        assert "const CT: number = 5" in contents.value, (
             f"expected const export in hover, got: {contents.value}"
         )
 
@@ -1379,6 +1316,6 @@ async def test_import_hover_autoopen(client: LanguageClient):
         assert contents is not None
         assert "hi" in contents.value, f"expected 'hi' in hover, got: {
             contents.value}"
-        assert "fn hi" in contents.value or "num" in contents.value, (
+        assert "fn hi" in contents.value or "number" in contents.value, (
             f"expected fn signature in hover, got: {contents.value}"
         )
